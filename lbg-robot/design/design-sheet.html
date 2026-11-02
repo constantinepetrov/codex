@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Робот LBG</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Лист дизайна: чертёжный планшет на кремовой бумаге. Бордовый только там, где что-то меняется. */
+:root {
+  --bg: #f1ede4;
+  --paper: #f8f5ee;
+  --ink: #26221f;
+  --mute: #6d665e;
+  --line: #cdc5b6;
+  --enamel: #fbfaf7;
+  --graphite: #3a3d42;
+  --steel: #a7acb3;
+  --accent: #651e32;
+  --soft: #e7e0d2;
+  --f-body: 'Golos Text', 'Segoe UI', system-ui, sans-serif;
+  --f-head: 'Unbounded', 'Golos Text', 'Segoe UI', sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 var(--f-body); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px; }
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 44px; }
+header { display: grid; gap: 10px; border-bottom: 2px solid var(--ink); padding-bottom: 18px; }
+.tag { font: 600 11px/1 var(--f-body); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 500 clamp(26px, 5vw, 44px)/1.08 var(--f-head); margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+.lead { max-width: 64ch; color: var(--mute); margin: 0; }
+h2 { font: 500 20px/1.2 var(--f-head); margin: 0 0 6px; text-wrap: balance; }
+.sub { margin: 0 0 16px; color: var(--mute); max-width: 70ch; }
+.board { background: var(--paper); border: 1px solid var(--line); padding: 16px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.cap { font: 600 11px/1.2 var(--f-body); letter-spacing: .1em; text-transform: uppercase; color: var(--mute); margin-bottom: 8px; display: flex; justify-content: space-between; gap: 8px; }
+svg { width: 100%; height: auto; display: block; }
+svg text { font-family: var(--f-body); }
+.ground { stroke: var(--ink); stroke-width: 1.4; }
+.dim { stroke: var(--mute); stroke-width: .8; stroke-dasharray: 3 3; fill: none; }
+.body-f { fill: var(--enamel); stroke: var(--graphite); stroke-width: 1.2; stroke-linejoin: round; }
+.joint { fill: var(--graphite); stroke: var(--steel); stroke-width: 1; }
+.acc { fill: var(--accent); }
+.glass { fill: #1b222b; }
+.seam { stroke: var(--graphite); stroke-width: .7; fill: none; opacity: .6; }
+.t { font-size: 9px; fill: var(--mute); }
+.tb { font-size: 10px; fill: var(--ink); font-weight: 600; }
+.phase-box { fill: var(--enamel); stroke: var(--graphite); stroke-width: 1; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); background: var(--paper); }
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 13.5px; }
+th { text-align: left; font: 600 11px/1.2 var(--f-body); letter-spacing: .1em; text-transform: uppercase; color: var(--mute); padding: 10px 12px; border-bottom: 2px solid var(--ink); background: var(--soft); }
+td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td:first-child { font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+.n { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; padding: 0; list-style: none; }
+.chips li { border: 1px solid var(--line); background: var(--paper); padding: 3px 9px; font-size: 12.5px; }
+.chips b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.jgroups { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.jg { border: 1px solid var(--line); background: var(--paper); padding: 12px 14px; }
+.jg h3 { margin: 0 0 6px; font: 600 13px/1.3 var(--f-body); display: flex; justify-content: space-between; gap: 8px; }
+.jg h3 span { color: var(--accent); font-variant-numeric: tabular-nums; }
+.jg p { margin: 0; color: var(--mute); font-size: 13px; }
+.cols2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
+ul.tight { margin: 0; padding-left: 18px; display: grid; gap: 5px; }
+.q { border-left: 4px solid var(--accent); background: var(--paper); padding: 14px 18px; display: grid; gap: 10px; }
+.q ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.pill { display: inline-block; justify-self: start; align-self: start; font: 600 11px/1 var(--f-body); letter-spacing: .08em; text-transform: uppercase; background: var(--accent); color: #fff; padding: 4px 8px; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--mute); margin-top: 12px; }
+.legend i { display: inline-block; width: 12px; height: 12px; vertical-align: -2px; margin-right: 6px; border: 1px solid var(--graphite); }
+@media (max-width: 760px) { .grid2, .grid3 { grid-template-columns: minmax(0, 1fr); } }
+</style>
+
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="tag">Для сайта Leaders Business Group</div>
+    <h1>Робот LBG</h1>
+    <p class="lead">Лист дизайна до моделирования. Скоростной поезд разбирается на узлы и собирается в гуманоидного робота. Здесь силуэты, карта соответствия деталей, узлы, суставы и вопросы, которые нужно закрыть до начала работы.</p>
+  </header>
+
+  <section>
+    <h2>Силуэт робота</h2>
+    <p class="sub">Рост 15 м в единицах модели. Уверенная широкая стойка, колени слегка согнуты, кисти раскрыты. Лица нет: на месте головы шлем с забралом-щелью, как у лобового стекла поезда.</p>
+    <div class="board">
+      <div class="grid2">
+        <div><div class="cap"><span>Спереди</span><span>15 м</span></div><svg id="rf" viewBox="0 0 380 430" role="img" aria-label="Робот спереди"></svg></div>
+        <div><div class="cap"><span>Сбоку</span><span>глубина 6 м с ранцем</span></div><svg id="rs" viewBox="0 0 380 430" role="img" aria-label="Робот сбоку"></svg></div>
+      </div>
+      <div class="legend"><span><i style="background:var(--enamel)"></i>белая и светло-серая эмаль</span><span><i style="background:var(--graphite)"></i>графитовые суставы</span><span><i style="background:var(--accent);border-color:var(--accent)"></i>бордовые акценты</span><span><i style="background:var(--steel)"></i>нержавеющая сталь</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Поезд</h2>
+    <p class="sub">Пять вагонов по 10 м: головной, три средних, хвостовой. Размеры по Velaro: ширина 2,95 м, высота 3,89 м, колесо 920 мм, база тележки 2,5 м. Вагоны короче настоящих (около 25 м), чтобы деталей хватило на робота нужного роста.</p>
+    <div class="board" style="display:grid;gap:18px">
+      <div><div class="cap"><span>Сбоку</span><span>50 м</span></div><svg id="ts" viewBox="0 0 960 130" role="img" aria-label="Поезд сбоку"></svg></div>
+      <div class="grid2">
+        <div><div class="cap"><span>Сверху</span><span>2,95 м</span></div><svg id="tt" viewBox="0 0 480 70" role="img" aria-label="Поезд сверху"></svg></div>
+        <div><div class="cap"><span>Спереди</span><span>3,89 м</span></div><svg id="tf" viewBox="0 0 240 130" role="img" aria-label="Нос поезда спереди"></svg></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Пять фаз превращения</h2>
+    <p class="sub">Один ползунок от 0 до 1. Каждая фаза со своим характером движения: замах, перелёт с инерцией, отскок на фиксации.</p>
+    <div class="board"><div id="phases" class="grid3"></div></div>
+  </section>
+
+  <section>
+    <h2>Карта соответствия</h2>
+    <p class="sub">Какая деталь поезда становится какой частью робота. Ничего не появляется из воздуха и не исчезает: у каждой детали есть путь из начального положения в конечное.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Узел робота</th><th>Из чего получается</th><th>Что с деталью происходит</th></tr></thead>
+      <tbody id="map"></tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Узлы и суставы</h2>
+    <p class="sub">14 крупных узлов. Парные считаются за один. Всего 61 сустав и шарнир и около 600 отдельных деталей в иерархии.</p>
+    <ul class="chips" id="nodes"></ul>
+    <div class="jgroups" id="joints"></div>
+  </section>
+
+  <section>
+    <h2>Решения и вопросы</h2>
+    <div class="cols2">
+      <div>
+        <h3 style="margin:0 0 8px;font:600 14px var(--f-body)">Решено самостоятельно</h3>
+        <ul class="tight">
+          <li>Робот полностью оригинальный: силуэт, цвета и забрало не повторяют известные франшизы. Надписей и логотипов на модели нет.</li>
+          <li>Корпус белая и светло-серая эмаль, графитовые суставы, бордовые акценты <b>#651e32</b>, немного шлифованной стали. Фон кремовый, свет студийный мягкий.</li>
+          <li>Three.js, потому что модель собрана из кода и работает офлайн одним файлом. Blender в этом окружении недоступен.</li>
+          <li>Вместо запечённых карт Blender: процедурные материалы и общий атлас узоров стыков, заклёпок и вентрешёток, чтобы деталь читалась без тяжёлой модели.</li>
+          <li>Две версии для сайта: компьютер и телефон, телефон с меньшим числом мелких деталей.</li>
+          <li>Паровоз и его превращение остаются в репозитории как есть, в папке lbg-train.</li>
+        </ul>
+      </div>
+      <div class="q">
+        <span class="pill">Нужен ваш ответ</span>
+        <ol>
+          <li><b>Масштаб:</b> 5 вагонов по 10 м, рост робота 15 м. Подходит?</li>
+          <li><b>Голова:</b> шлем с забралом-щелью и без лица. Или нужны глаза и узнаваемое лицо?</li>
+          <li><b>Финальная поза:</b> спокойная стойка с опущенными раскрытыми кистями или шаг вперёд с поднятой рукой?</li>
+          <li><b>Сюжет:</b> оставить обратное превращение робот в поезд для скролла вверх?</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+</div>
+<script>
+(function () {
+  // ---- чертёжные помощники: метры в пиксели ----
+  function mk(id, s, ox, oy) {
+    var el = document.getElementById(id), out = [];
+    var X = function (x) { return (ox + x * s).toFixed(1); }, Y = function (y) { return (oy - y * s).toFixed(1); };
+    return {
+      poly: function (pts, cls, extra) { out.push('<polygon class="' + cls + '" ' + (extra || '') + ' points="' + pts.map(function (p) { return X(p[0]) + ',' + Y(p[1]); }).join(' ') + '"/>'); },
+      circ: function (x, y, r, cls) { out.push('<circle class="' + cls + '" cx="' + X(x) + '" cy="' + Y(y) + '" r="' + (r * s).toFixed(1) + '"/>'); },
+      rect: function (x, y, w, h, cls, rx) { out.push('<rect class="' + cls + '" x="' + X(x) + '" y="' + Y(y + h) + '" width="' + (w * s).toFixed(1) + '" height="' + (h * s).toFixed(1) + '" rx="' + ((rx || 0) * s).toFixed(1) + '"/>'); },
+      line: function (x1, y1, x2, y2, cls) { out.push('<line class="' + cls + '" x1="' + X(x1) + '" y1="' + Y(y1) + '" x2="' + X(x2) + '" y2="' + Y(y2) + '"/>'); },
+      text: function (x, y, t, cls, anchor) { out.push('<text class="' + cls + '" x="' + X(x) + '" y="' + Y(y) + '" text-anchor="' + (anchor || 'start') + '">' + t + '</text>'); },
+      raw: function (h) { out.push(h); },
+      done: function () { el.innerHTML = out.join(''); }
+    };
+  }
+  function mirrorPts(pts) { return pts.map(function (p) { return [-p[0], p[1]]; }); }
+
+  // ---- робот спереди ----
+  (function () {
+    var g = mk('rf', 24, 190, 410);
+    g.line(-7, 0, 7, 0, 'ground');
+    [1, -1].forEach(function (s) {
+      var m = function (a) { return s > 0 ? a : mirrorPts(a); };
+      g.poly(m([[0.55, 0], [2.2, 0], [2.2, 0.75], [0.7, 0.9]]), 'body-f');                       // стопа
+      g.poly(m([[0.8, 0.9], [1.9, 0.9], [2.2, 4.0], [0.5, 4.0]]), 'body-f');                     // голень
+      g.poly(m([[1.0, 2.4], [1.7, 2.4], [1.7, 2.7], [1.0, 2.7]]), 'acc');
+      g.circ(s * 1.35, 4.25, 0.95, 'joint');                                                     // колено
+      g.poly(m([[0.4, 4.5], [2.3, 4.5], [2.2, 7.6], [0.5, 7.6]]), 'body-f');                     // бедро
+      g.circ(s * 1.4, 7.9, 0.95, 'joint');                                                       // бедро: шарнир
+      });
+    g.poly([[-2.2, 7.3], [2.2, 7.3], [2.4, 8.6], [1.2, 8.95], [-1.2, 8.95], [-2.4, 8.6]], 'body-f'); // таз
+    g.rect(-1.0, 8.95, 2.0, 1.0, 'joint', 0.2);                                                      // талия
+    g.poly([[-1.7, 9.95], [1.7, 9.95], [2.5, 12.3], [1.8, 13.3], [-1.8, 13.3], [-2.5, 12.3]], 'body-f'); // грудь
+    g.poly([[-0.9, 10.4], [0.9, 10.4], [0.9, 12.0], [-0.9, 12.0]], 'body-f');
+    g.line(-0.9, 11.2, 0.9, 11.2, 'dim');
+    [1, -1].forEach(function (s) {
+      var m = function (a) { return s > 0 ? a : mirrorPts(a); };
+      g.poly(m([[2.1, 11.2], [4.4, 11.2], [4.3, 13.0], [2.4, 13.3]]), 'body-f');                // плечевой щиток
+      g.poly(m([[2.3, 12.35], [4.3, 12.35], [4.3, 12.7], [2.3, 12.7]]), 'acc');
+      g.circ(s * 3.2, 11.5, 0.8, 'joint');                                                       // плечо
+      g.poly(m([[2.55, 11.1], [3.95, 11.1], [4.2, 9.2], [2.7, 9.2]]), 'body-f');                // плечо-предплечье
+      g.circ(s * 3.45, 9.0, 0.65, 'joint');                                                      // локоть
+      g.poly(m([[2.75, 8.6], [4.05, 8.6], [4.2, 6.2], [3.0, 6.2]]), 'body-f');                  // предплечье
+      g.circ(s * 3.6, 6.1, 0.45, 'joint');                                                       // запястье
+      g.poly(m([[3.0, 5.9], [4.2, 5.9], [4.3, 4.7], [3.1, 4.7]]), 'body-f');                    // кисть
+      [3.2, 3.5, 3.8, 4.1].forEach(function (x) { g.line(s * x, 4.7, s * x, 4.1, 'dim'); });
+    });
+    // стыки, вентрешётки, гидроцилиндры
+    [-1.2, -0.7, -0.2].forEach(function (x, i) { g.rect(-0.9 + i * 0.62, 10.3, 0.4, 0.14, 'joint', 0); g.rect(-0.9 + i * 0.62, 10.55, 0.4, 0.14, 'joint', 0); });
+    g.line(-2.3, 12.0, 2.3, 12.0, 'seam'); g.line(0, 12.0, 0, 13.3, 'seam'); g.line(-1.7, 11.0, 1.7, 11.0, 'seam');
+    g.line(-2.0, 8.2, 2.0, 8.2, 'seam'); g.line(0, 7.3, 0, 8.95, 'seam');
+    [1, -1].forEach(function (s) {
+      g.line(s * 1.0, 5.2, s * 1.0, 7.4, 'seam'); g.line(s * 1.75, 5.2, s * 1.75, 7.4, 'seam'); g.line(s * 0.9, 6.3, s * 2.2, 6.3, 'seam');
+      g.rect(s > 0 ? 1.15 : -1.25, 2.9, 0.1, 1.0, 'joint', 0); g.rect(s * 1.35 - 0.05, 4.9, 0.1, 1.9, 'joint', 0);
+      g.poly([[s * 0.95, 4.9], [s * 1.75, 4.9], [s * 1.55, 5.5], [s * 1.15, 5.5]], 'body-f');
+      g.line(s * 3.0, 7.2, s * 3.9, 7.2, 'seam'); g.line(s * 3.25, 10.4, s * 3.95, 10.4, 'seam');
+      g.rect(s * 3.35 - 0.05, 9.7, 0.1, 1.6, 'joint', 0);
+    });
+    g.rect(-0.5, 13.3, 1.0, 0.55, 'joint', 0.1);                                                    // шея
+    g.poly([[-0.95, 13.85], [0.95, 13.85], [1.25, 14.9], [0.6, 15.35], [-0.6, 15.35], [-1.25, 14.9]], 'body-f'); // шлем
+    g.poly([[-0.8, 14.55], [0.8, 14.55], [0.75, 14.8], [-0.75, 14.8]], 'glass');                   // забрало
+    g.rect(-0.12, 14.55, 0.24, 0.25, 'acc', 0);
+    // размеры
+    g.line(-6.2, 0, -6.2, 15.35, 'dim'); g.text(-6.0, 7.6, '15 м', 't');
+    g.line(-4.4, 15.9, 4.4, 15.9, 'dim'); g.text(0, 16.2, '8,8 м по плечам', 't', 'middle');
+    [['шея', 0.75, 13.55], ['плечо', 3.2, 11.5], ['локоть', 3.45, 9.0], ['запястье', 3.6, 6.1], ['талия', 0, 9.45], ['бедро', 1.4, 7.9], ['колено', 1.35, 4.25]].forEach(function (a, i) { g.circ(a[1], a[2], 0.18, 'acc'); });
+    g.done();
+  })();
+
+  // ---- робот сбоку ----
+  (function () {
+    var g = mk('rs', 24, 150, 410);
+    g.line(-5, 0, 7, 0, 'ground');
+    g.poly([[-0.95, 0], [2.0, 0], [1.7, 0.5], [0.5, 0.95], [-0.9, 0.85]], 'body-f');                // стопа
+    g.poly([[-0.55, 0.95], [0.75, 0.95], [1.15, 4.0], [-0.2, 4.2]], 'body-f');                      // голень
+    g.circ(0.5, 4.25, 0.9, 'joint');                                                                 // колено
+    g.poly([[-0.3, 4.5], [1.2, 4.5], [0.95, 7.9], [-0.85, 7.9]], 'body-f');                         // бедро
+    g.circ(0.0, 7.9, 0.9, 'joint');                                                                  // бедро: шарнир
+    g.poly([[-1.2, 7.4], [1.1, 7.4], [1.25, 8.9], [-1.35, 8.9]], 'body-f');                         // таз
+    g.rect(-0.85, 8.9, 1.7, 1.0, 'joint', 0.2);
+    g.poly([[-1.6, 9.9], [1.55, 9.9], [1.75, 12.0], [1.25, 13.3], [-1.7, 13.3], [-2.0, 11.0]], 'body-f'); // грудь
+    g.poly([[-1.9, 10.2], [-3.2, 10.6], [-3.3, 13.0], [-1.85, 13.3]], 'body-f');                    // ранец
+    g.poly([[-2.4, 13.0], [-2.1, 13.0], [-2.1, 14.8], [-2.4, 14.8]], 'joint');                      // мачта-пантограф
+    g.poly([[-3.3, 11.5], [-3.2, 11.2], [-3.0, 11.2], [-3.0, 11.5]], 'acc');
+    g.rect(-0.4, 13.3, 0.8, 0.55, 'joint', 0.1);
+    g.poly([[-0.95, 13.85], [0.95, 13.85], [1.5, 14.5], [1.05, 15.35], [-0.9, 15.35]], 'body-f');    // шлем
+    g.poly([[0.55, 14.35], [1.4, 14.45], [1.2, 14.8], [0.55, 14.8]], 'glass');                     // забрало
+    // рука вперёд-вниз
+    g.poly([[-0.75, 12.8], [0.75, 12.8], [1.0, 9.3], [-0.45, 9.3]], 'body-f');                      // плечо
+    g.circ(0.0, 12.3, 0.8, 'joint');
+    g.circ(0.3, 9.1, 0.65, 'joint');                                                                 // локоть
+    g.poly([[-0.4, 9.2], [1.0, 9.2], [1.6, 6.9], [0.4, 6.7]], 'body-f');                            // предплечье
+    g.poly([[0.4, 6.7], [1.6, 6.9], [1.8, 5.7], [0.55, 5.6]], 'body-f');                            // кисть
+    for (var k = 0; k < 4; k++) g.rect(-3.1, 10.8 + k * 0.5, 1.1, 0.14, 'joint', 0);              // решётка ранца
+    g.line(-1.8, 12.0, 1.5, 12.0, 'seam'); g.line(-1.5, 11.0, 1.6, 11.0, 'seam'); g.line(-1.2, 8.2, 1.1, 8.2, 'seam');
+    g.line(-0.2, 5.4, 0.1, 7.4, 'seam'); g.line(-0.1, 1.6, 0.4, 3.8, 'seam');
+    g.rect(0.9, 5.0, 0.12, 2.6, 'joint', 0); g.rect(0.95, 1.1, 0.12, 2.5, 'joint', 0);              // гидроцилиндры бедра и голени
+    g.line(0.2, 14.2, 1.1, 14.2, 'seam');
+    g.line(-3.8, 0, -3.8, 15.35, 'dim'); g.text(-3.6, 7.6, '15 м', 't');
+    g.done();
+  })();
+
+  // ---- поезд сбоку ----
+  (function () {
+    var g = mk('ts', 17, 12, 118);
+    g.line(-0.5, 0, 56, 0, 'ground');
+    var names = ['Головной', 'Средний 1', 'Средний 2', 'Средний 3', 'Хвостовой'];
+    for (var i = 0; i < 5; i++) {
+      var x0 = (4 - i) * 10.4 + 0.2;
+      if (i === 4) { g.poly([[x0, 0.84], [x0 + 10, 0.84], [x0 + 10, 3.89], [x0 + 3.5, 3.89], [x0, 1.6]], 'body-f'); }
+      else if (i === 0) { g.poly([[x0, 0.84], [x0 + 10, 0.84], [x0 + 10, 3.89], [x0 + 6.5, 3.89], [x0 + 10, 1.55]].slice(0, 0).concat([[x0, 0.84], [x0 + 10, 0.84], [x0 + 10, 1.5], [x0 + 9.2, 2.3], [x0 + 6.4, 3.89], [x0, 3.89]]), 'body-f'); }
+      else { g.poly([[x0, 0.84], [x0 + 10, 0.84], [x0 + 10, 3.89], [x0, 3.89]], 'body-f'); }
+      g.rect(x0, 1.7, 10, 0.3, 'acc', 0);
+      for (var w = 0; w < 7; w++) g.rect(x0 + 1.0 + w * 1.15 + (i === 4 ? 1.5 : 0), 2.5, 0.75, 0.55, 'glass', 0.08);
+      [2.0, 8.0].forEach(function (b) { g.rect(x0 + b - 1.6, 0.32, 3.2, 0.2, 'joint', 0); [-1.25, 1.25].forEach(function (a) { g.circ(x0 + b + a, 0.46, 0.46, 'joint'); }); });
+      g.text(x0 + 5, 4.6, ['N', 'С1', 'С2', 'С3', 'Т'][i], 'tb', 'middle');
+    }
+    g.raw('<text class="t" x="944" y="14" text-anchor="end">нос, направление хода →</text>');
+    g.poly([[32.7, 3.89], [33.4, 4.6], [35.4, 4.6], [36.2, 3.89]], 'joint');                         // пантограф
+    g.done();
+  })();
+
+  // ---- поезд сверху ----
+  (function () {
+    var g = mk('tt', 9, 8, 35);
+    for (var i = 0; i < 5; i++) {
+      var x0 = (4 - i) * 10.4 + 0.2;
+      if (i === 0) g.poly([[x0, -1.47], [x0 + 6.5, -1.47], [x0 + 9.2, -0.7], [x0 + 10, 0], [x0 + 9.2, 0.7], [x0 + 6.5, 1.47], [x0, 1.47]], 'body-f');
+      else if (i === 4) g.poly([[x0 + 10, -1.47], [x0 + 6.5, -1.47], [x0, -1.47], [x0, 1.47], [x0 + 6.5, 1.47], [x0 + 10, 0.7], [x0 + 10.8, 0], [x0 + 10, -0.7]].map(function (p) { return [2 * x0 + 10 - p[0], p[1]]; }), 'body-f');
+      else g.rect(x0, -1.47, 10, 2.94, 'body-f', 0);
+    }
+    g.done();
+  })();
+
+  // ---- нос спереди ----
+  (function () {
+    var g = mk('tf', 28, 120, 118);
+    g.line(-4, 0, 4, 0, 'ground');
+    g.poly([[-1.47, 0.84], [1.47, 0.84], [1.5, 2.0], [1.2, 3.2], [0.7, 3.89], [-0.7, 3.89], [-1.2, 3.2], [-1.5, 2.0]], 'body-f');
+    g.poly([[-0.95, 2.4], [0.95, 2.4], [0.7, 3.5], [-0.7, 3.5]], 'glass');
+    g.rect(-1.45, 1.55, 2.9, 0.22, 'acc', 0);
+    g.poly([[-1.2, 1.1], [-0.55, 1.1], [-0.55, 1.35], [-1.2, 1.35]], 'joint'); g.poly([[1.2, 1.1], [0.55, 1.1], [0.55, 1.35], [1.2, 1.35]], 'joint');
+    g.circ(-1.0, 0.46, 0.46, 'joint'); g.circ(1.0, 0.46, 0.46, 'joint');
+    g.done();
+  })();
+
+  // ---- фазы ----
+  (function () {
+    var el = document.getElementById('phases');
+    function panel(title, note, draw) {
+      var d = document.createElement('div');
+      d.innerHTML = '<div class="cap"><span>' + title + '</span></div><svg viewBox="0 0 300 190"></svg><p style="margin:6px 0 0;font-size:12.5px;color:var(--mute)">' + note + '</p>';
+      el.appendChild(d);
+      var svg = d.querySelector('svg'), out = [];
+      draw({
+        ground: function () { out.push('<line class="ground" x1="6" y1="176" x2="294" y2="176"/>'); },
+        box: function (x, y, w, h, rot, cls, label) { out.push('<g transform="rotate(' + rot + ' ' + (x + w / 2) + ' ' + (y + h / 2) + ')"><rect class="' + (cls || 'phase-box') + '" x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="2"/>' + (label ? '<text class="t" x="' + (x + w / 2) + '" y="' + (y + h / 2 + 3) + '" text-anchor="middle">' + label + '</text>' : '') + '</g>'); },
+        arrow: function (x1, y1, x2, y2) { out.push('<path d="M' + x1 + ',' + y1 + ' L' + x2 + ',' + y2 + '" stroke="#651e32" stroke-width="1.4" fill="none" marker-end="url(#ar)"/>'); }
+      });
+      svg.innerHTML = '<defs><marker id="ar" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#651e32"/></marker></defs>' + out.join('');
+    }
+    var fill = ['#fbfaf7', '#f3efe6'];
+    panel('1. Поезд, прогресс 0', 'Пять вагонов стоят в ряд. Силуэт обтекаемый, окна, двери и бордовая полоса видны.', function (c) {
+      c.ground();
+      ['N', 'С1', 'С2', 'С3', 'Т'].forEach(function (t, i) { c.box(10 + (4 - i) * 56, 142, 54, 32, 0, 'phase-box', t); });
+    });
+    panel('2. Раскрытие, 0,15', 'Створки каждого вагона раскрываются лепестками, внутри виден силовой блок. Тележки отцепляются.', function (c) {
+      c.ground();
+      ['N', 'С1', 'С2', 'С3', 'Т'].forEach(function (t, i) { var x = 10 + (4 - i) * 56; c.box(x, 148, 54, 26, 0, 'phase-box', t); c.box(x + 2, 130, 24, 6, -38, 'phase-box'); c.box(x + 28, 130, 24, 6, 38, 'phase-box'); });
+    });
+    panel('3. Разделение, 0,35', 'Вагоны едут врозь, головной поднимается носом вверх. Колёсные пары остаются на рельсах и катятся на свои места.', function (c) {
+      c.ground();
+      c.box(228, 60, 54, 30, -72, 'phase-box', 'N'); c.box(170, 126, 54, 30, -20, 'phase-box', 'С1'); c.box(110, 138, 54, 30, -8, 'phase-box', 'С2'); c.box(52, 144, 54, 30, 0, 'phase-box', 'С3'); c.box(6, 146, 40, 28, 0, 'phase-box', 'Т');
+      c.arrow(250, 105, 268, 62);
+    });
+    panel('4. Сборка, 0,65', 'Туловище встаёт, ноги и руки разворачиваются телескопически, тележки садятся в суставы.', function (c) {
+      c.ground();
+      c.box(122, 56, 52, 56, 0, 'phase-box', 'грудь'); c.box(132, 112, 32, 18, 0, 'phase-box', 'таз'); c.box(110, 16, 30, 52, -10, 'phase-box'); c.box(152, 16, 30, 52, 10, 'phase-box');
+      c.box(84, 70, 26, 48, 16, 'phase-box'); c.box(186, 70, 26, 48, -16, 'phase-box'); c.box(130, 130, 12, 42, 0, 'phase-box'); c.box(154, 130, 12, 42, 0, 'phase-box');
+      c.arrow(60, 100, 90, 98); c.arrow(240, 100, 210, 98);
+    });
+    panel('5. Поза, прогресс 1', 'Замки, отскок на фиксации, затухающая дрожь. Уверенная стойка, забрало закрыто.', function (c) {
+      c.ground();
+      c.box(122, 48, 56, 56, 0, 'phase-box', 'грудь'); c.box(138, 24, 24, 20, 0, 'phase-box'); c.box(126, 104, 48, 18, 0, 'phase-box', 'таз');
+      c.box(124, 122, 22, 54, 0, 'phase-box'); c.box(154, 122, 22, 54, 0, 'phase-box'); c.box(94, 52, 22, 62, 4, 'phase-box'); c.box(184, 52, 22, 62, -4, 'phase-box');
+      c.box(140, 28, 20, 14, 0, 'phase-box'); c.box(136, 12, 28, 18, 0, 'phase-box', 'голова');
+    });
+    panel('Обратный ход', 'Скролл вверх проигрывает то же по формулам от прогресса: ничего не пересчитывается.', function (c) {
+      c.ground();
+      ['N', 'С1', 'С2', 'С3', 'Т'].forEach(function (t, i) { c.box(10 + (4 - i) * 56, 142, 54, 32, 0, 'phase-box', t); });
+      c.arrow(260, 128, 40, 128);
+    });
+  })();
+
+  // ---- карта соответствия ----
+  var MAP = [
+    ['Голова', 'Носовой обтекатель и лобовое стекло головного вагона, фары, дворники', 'Обтекатель выезжает вперёд и складывается в шлем, стекло становится забралом, фары светящимися щелями.'],
+    ['Шея', 'Гармошка между головным и первым вагоном', 'Сжимается в телескопическую шею, стягивается кольцами.'],
+    ['Грудь', 'Корпус головного вагона: рама, силовой блок, панели пола', 'Вагон встаёт торцом вверх, рама сокращается телескопически с 10 до 4,5 м.'],
+    ['Плечевые щитки', 'Боковые лепестки головного вагона', 'Раскрываются в стороны на шарнирах и садятся на плечи.'],
+    ['Спина и ранец', 'Крыша головного вагона и пантограф', 'Крыша откидывается назад, как ранец, пантограф становится мачтой.'],
+    ['Таз и талия', 'Корпус и рама первого среднего вагона', 'Вагон сжимается до 2,5 м и поворачивается горизонтально. Телескопическая талия.'],
+    ['Плечи и локти', 'Боковые лепестки первого среднего вагона и тележки головного', 'Лепестки вытягиваются в плечо и предплечье. Тележки садятся в локти.'],
+    ['Плечевые шарниры', 'Тележки первого среднего вагона', 'Улетают вверх и садятся в плечи, колёса становятся шарнирными дисками.'],
+    ['Кисти и пальцы', 'Двери (6 штук) и 10 выдвижных муфт силовых блоков', 'Муфты выезжают пальцами, двери становятся ладонью и тыльной пластиной.'],
+    ['Бёдра', 'Боковые лепестки второго среднего вагона, крыша', 'Лепестки вытягиваются в бедро, крыша становится бедренной бронёй.'],
+    ['Бедренные шарниры', 'Тележки второго среднего вагона', 'Садятся в таз по бокам, колёса становятся дисками шарнира.'],
+    ['Голени и колени', 'Лепестки и тележки третьего среднего вагона', 'Лепестки вытягиваются в голень, тележки садятся коленями.'],
+    ['Стопы', 'Хвостовой вагон: нижние лепестки, хвостовой обтекатель, тележки', 'Обтекатель делится на два носка, лепестки становятся подошвой, тележки пяткой.'],
+    ['Позвоночник и кабели', 'Телескопическая рама, гидроприводы, гармошки', 'Рама вытягивается позвоночником, приводы остаются в суставах, гармошки становятся кожухами.']
+  ];
+  document.getElementById('map').innerHTML = MAP.map(function (r) { return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td><td>' + r[2] + '</td></tr>'; }).join('');
+
+  // ---- узлы и суставы ----
+  var NODES = [['Голова', 40], ['Шея', 12], ['Грудь', 60], ['Спина и ранец', 35], ['Плечевые щитки', 60], ['Плечи и предплечья', 100], ['Кисти и пальцы', 60], ['Таз и талия', 35], ['Бёдра', 50], ['Бедренные шарниры', 20], ['Голени', 50], ['Колени', 24], ['Стопы', 40]];
+  NODES.push(['Позвоночник и кабели', 20]);
+  var total = 0; NODES.forEach(function (n) { total += n[1]; });
+  document.getElementById('nodes').innerHTML = NODES.map(function (n, i) { return '<li>' + (i + 1) + '. ' + n[0] + ' <b>' + n[1] + '</b></li>'; }).join('') + '<li>Всего деталей <b>' + total + '</b></li>';
+  var J = [
+    ['Голова и шея', 4, 'Шея: 3 оси. Забрало: 1 шарнир откидывания.'],
+    ['Плечи', 8, 'Плечевой сустав: 3 оси слева и справа, ещё по шарниру плечевого щитка: 2.'],
+    ['Локти и запястья', 8, 'Локоть: сгибание и поворот, слева и справа: 4. Запястье: 2 оси слева и справа: 4.'],
+    ['Пальцы', 20, 'На кисти пять пальцев по два сустава: по 10 на руку.'],
+    ['Талия и позвоночник', 4, 'Талия: поворот и наклон: 2. Телескопический позвоночник: 1. Гармошка груди: 1.'],
+    ['Бёдра', 6, 'Бедренный сустав: 3 оси слева и справа.'],
+    ['Колени', 4, 'Колено: сгибание и поворот, слева и справа.'],
+    ['Лодыжки и носки', 6, 'Лодыжка: 2 оси слева и справа: 4. Носок: по одному шарниру: 2.'],
+    ['Ранец', 1, 'Откидывание ранца с крыши.']
+  ];
+  var jt = 0; J.forEach(function (j) { jt += j[1]; });
+  document.getElementById('joints').innerHTML = J.map(function (j) { return '<div class="jg"><h3>' + j[0] + '<span>' + j[1] + '</span></h3><p>' + j[2] + '</p></div>'; }).join('') + '<div class="jg" style="background:var(--soft)"><h3>Всего суставов<span>' + jt + '</span></h3><p>Каждый с точкой вращения в шарнире и рабочим диапазоном углов.</p></div>';
+})();
+</script>
+
+</body>
+</html>
