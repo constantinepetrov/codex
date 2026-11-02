@@ -300,6 +300,14 @@ function shellGeo(PA, PB, up) {
 }
 
 // ---------- детали и позы ----------
+// Раскладка паровоза по реальным числам (USRA Light Mikado 2-8-2): ведущие колёса 63 дюйма, жёсткая база 16 футов 9 дюймов,
+// база паровоза 36 футов 1 дюйм, база паровоза с тендером 71 фут 4 дюйма. Старые координаты A переводятся кусочно-линейно.
+const XMAP = [[-11.8, -15.2], [-11.2, -14.44], [-10.1, -12.99], [-9.0, -11.54], [-7.2, -9.44], [-6.1, -7.99], [-5.0, -6.54], [-3.4, -4.9], [-2.9, -3.70], [-1.3, -0.15], [0.3, 1.55], [1.9, 3.25], [3.5, 4.95], [5.2, 7.3], [7.2, 9.0], [8.0, 9.8]];
+const X = (x) => {
+  if (x <= XMAP[0][0]) return XMAP[0][1] + (x - XMAP[0][0]);
+  for (let i = 1; i < XMAP.length; i++) if (x <= XMAP[i][0]) { const [a, b] = XMAP[i - 1], [c, d] = XMAP[i]; return b + (x - a) / (c - a) * (d - b); }
+  const [a, b] = XMAP[XMAP.length - 1]; return b + (x - a);
+};
 const parts = [];
 const byName = {};
 const E = (x, y, z) => new THREE.Euler(x, y, z);
@@ -307,6 +315,7 @@ const Q = (x = 0, y = 0, z = 0) => new THREE.Quaternion().setFromEuler(E(x, y, z
 const pose = (p, r = [0, 0, 0], s = [1, 1, 1]) => ({p: new THREE.Vector3(...p), q: Q(...r), s: new THREE.Vector3(...s)});
 
 function add(name, o) {
+  if (o.A && !o.Afn && !o.noMap) o.A.p.x = X(o.A.p.x);
   const root = new THREE.Group();
   root.add(o.obj);
   root.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; } });
@@ -324,7 +333,7 @@ const at = (m, x, y = 0, z = 0) => { m.position.set(x, y, z); return m; };
 const grp = (...c) => { const g = new THREE.Group(); c.forEach((x) => g.add(x)); return g; };
 
 // 1. оболочки
-const BODY = {w: 3.0, h: 3.25, n: 3.4, yc: 2.4};
+const BODY = {w: 2.95, h: 3.05, n: 3.4, yc: 2.365}; // Velaro: ширина 2,95 м, высота 3,89 м от головки рельса
 const SHELLS = [
   {id: 'nose', k: 0, label: 'Дымовая коробка', A: {x0: 5.0, L: 1.55, w: 2.25, h: 2.25, n: 2, yc: 2.9}, B: {...BODY, x0: 9.2, L: 5.0, nose: 'front'}, win: 0, bands: 0},
   {id: 'b1', k: 1, label: 'Котёл', A: {x0: 0.75, L: 4.25, w: 2.1, h: 2.1, n: 2, yc: 2.9}, B: {...BODY, x0: 4.0, L: 5.2}, win: 1, bands: 1},
@@ -337,6 +346,7 @@ const MODOBJ = {};
 const MD = [0.02, 0.18, 0.38, 0.26, 0.02];
 const OVER = [1.0, 1.4, 0.7, 1.2, 1.7]; // перелёт по модулям: тяжёлый бак оседает сильнее, топка мягче // порядок старта модулей: носовые вперёд, хвостовые назад, середина последней
 SHELLS.forEach((S) => {
+  { const x0 = X(S.A.x0), x1 = X(S.A.x0 + S.A.L); S.A.x0 = x0; S.A.L = x1 - x0; }
   const mod = {k: S.k, side: SIDE[S.k], dir: ROLL[S.k], ycA: S.A.yc, ycB: S.B.yc};
   MODOBJ[S.id] = mod;
   for (const up of [1, 0]) {
@@ -346,7 +356,7 @@ SHELLS.forEach((S) => {
     const sd = SIDE[S.k];
     const pz = (w) => (up ? 1 : -1) * sd * w / 2;
     add(S.id + (up ? 'U' : 'L'), {
-      obj: m, A: pose(cA), B: pose(cB), d: MD[S.k], arc: 0.3, label: S.label, morph: m, shell: true, mod,
+      obj: m, A: pose(cA), B: pose(cB), noMap: true, d: MD[S.k], arc: 0.3, label: S.label, morph: m, shell: true, mod,
       sh: {up, side: sd, pivA: new THREE.Vector3(0, S.A.yc - cA[1], pz(S.A.w)), pivB: new THREE.Vector3(0, S.B.yc - cB[1], pz(S.B.w * (S.B.nose ? 0.8 : 1)))},
     });
   }
@@ -359,7 +369,7 @@ SHELLS.forEach((S) => {
   for (const x of [-0.32, 0.32]) { const gr = cyl(0.85, 0.04, cm, 14); gr.position.x = x; core.add(gr); const h2 = cyl(0.5, 0.05, bm, 14); h2.position.x = x; core.add(h2); }
   core.add(at(box(0.5, 0.34, 0.5, hot), 0, 0.15, 0));
   const xcA = S.A.x0 + S.A.L / 2, xcB = S.B.x0 + S.B.L / 2;
-  add('core_' + S.id, {obj: core, A: pose([xcA, S.A.yc, 0], [0, 0, 0], [S.A.L * 0.9, S.A.w / 2 * 0.8, S.A.h / 2 * 0.8]), B: pose([xcB, 1.75, 0], [0, 0, 0], [S.B.L * 0.8, 1.0, 1.0]), d: MD[S.k], arc: 0.3, label: 'Силовой блок', mod});
+  add('core_' + S.id, {noMap: true, obj: core, A: pose([xcA, S.A.yc, 0], [0, 0, 0], [S.A.L * 0.9, S.A.w / 2 * 0.8, S.A.h / 2 * 0.8]), B: pose([xcB, 1.75, 0], [0, 0, 0], [S.B.L * 0.8, 1.0, 1.0]), d: MD[S.k], arc: 0.3, label: 'Силовой блок', mod});
 });
 
 // 2. рама: три вложенных короба, выдвигаются телескопически
@@ -374,7 +384,7 @@ for (const S of SPINE) for (const s of [1, -1]) {
   const pin = new THREE.Group();
   for (const xx of [-5.4, 5.4]) { const c = cylZ(0.07, S.size + 0.08, mat(C.brass), 14); c.position.x = xx; pin.add(c); }
   add(S.id + (s > 0 ? 'L' : 'R'), {
-    obj: grp(rail, pin), A: pose([1.7, 1.15, s * 0.52]), B: pose([S.B, 0.62, s * 0.6]), d: 0.55 + hash(S.size * 9 + s) * 0.25,
+    obj: grp(rail, pin), noMap: true, A: pose([2.05, 1.15, s * 0.52], [0, 0, 0], [1.2, 1, 1]), B: pose([S.B, 0.62, s * 0.6]), d: 0.55 + hash(S.size * 9 + s) * 0.25,
     ex: [0, 1.8, s * 3.0], arc: 1.5, label: 'Рама', tint: [C.black, C.dark, m],
   });
 }
@@ -408,19 +418,19 @@ function makeWheel(r, side, pinR) {
   return g;
 }
 const AXLES = [
-  {id: 'ax_pony', r: 0.45, x: 5.2, pin: 0}, {id: 'ax_d1', r: 0.8, x: 3.5, pin: 0.42}, {id: 'ax_d2', r: 0.8, x: 1.9, pin: 0.42},
-  {id: 'ax_d3', r: 0.8, x: 0.3, pin: 0.42}, {id: 'ax_d4', r: 0.8, x: -1.3, pin: 0.42}, {id: 'ax_tr', r: 0.55, x: -2.9, pin: 0},
-  {id: 'ax_t1', r: 0.4, x: -5.0, pin: 0}, {id: 'ax_t2', r: 0.4, x: -6.1, pin: 0}, {id: 'ax_t3', r: 0.4, x: -7.2, pin: 0},
-  {id: 'ax_t4', r: 0.4, x: -9.0, pin: 0}, {id: 'ax_t5', r: 0.4, x: -10.1, pin: 0}, {id: 'ax_t6', r: 0.4, x: -11.2, pin: 0},
+  {id: 'ax_pony', r: 0.419, x: 5.2, pin: 0}, {id: 'ax_d1', r: 0.8, x: 3.5, pin: 0.381}, {id: 'ax_d2', r: 0.8, x: 1.9, pin: 0.381},
+  {id: 'ax_d3', r: 0.8, x: 0.3, pin: 0.381}, {id: 'ax_d4', r: 0.8, x: -1.3, pin: 0.381}, {id: 'ax_tr', r: 0.546, x: -2.9, pin: 0},
+  {id: 'ax_t1', r: 0.419, x: -5.0, pin: 0}, {id: 'ax_t2', r: 0.419, x: -6.1, pin: 0}, {id: 'ax_t3', r: 0.419, x: -7.2, pin: 0},
+  {id: 'ax_t4', r: 0.419, x: -9.0, pin: 0}, {id: 'ax_t5', r: 0.419, x: -10.1, pin: 0}, {id: 'ax_t6', r: 0.419, x: -11.2, pin: 0},
 ];
 const BOGIE_X = [11.0, 6.3, 1.2, -4.0, -9.2, -14.0];
-const RF = 0.46;
+const RF = 0.46; // колесо Velaro 920 мм
 AXLES.forEach((a, k) => {
   const spin = new THREE.Group();
   const shaft = cylZ(0.1, 1.7, mat(C.steel), 16);
   spin.add(shaft);
   for (const s of [1, -1]) { const w = makeWheel(a.r, s, a.pin); w.position.z = s * 0.72; spin.add(w); }
-  const bx = BOGIE_X[Math.floor(k / 2)] + (k % 2 ? -1.2 : 1.2);
+  const bx = BOGIE_X[Math.floor(k / 2)] + (k % 2 ? -1.25 : 1.25); // база тележки 2,5 м
   // ось, которая в паровозе тянет вперёд, становится передней осью тележки: порядок по x сохраняется
   add(a.id, {
     obj: spin, A: pose([a.x, a.r, 0]), B: pose([bx, RF, 0], [0, 0, 0], [RF / a.r, RF / a.r, 1]), d: 0.05 + 0.07 * k,
@@ -455,7 +465,7 @@ BOGIES.forEach((b, k) => {
 });
 
 // 4. кинематика паровоза: боковые тяги, шатуны, ползуны, штоки (поза A живая, зависит от угла колеса)
-const ROD = {R: 0.42, L: 2.5, yc: 0.82, drvX: [3.5, 1.9, 0.3, -1.3]};
+const ROD = {R: 0.381, L: 3.3, yc: 0.82, drvX: [3.5, 1.9, 0.3, -1.3].map(X)}; // ход поршня 30 дюймов, радиус кривошипа 0,381 м; длина шатуна оценочная
 const dyn = {phi: 0};
 function sideRodA(s) {
   const ph = dyn.phi + (s > 0 ? 0 : PI / 2);
@@ -470,8 +480,8 @@ function mainGeom(s) {
 for (const s of [1, -1]) {
   const sd = s > 0 ? 'L' : 'R';
   const rm = mat(C.steel, {metalness: 0.85, roughness: 0.3}), bm = mat(C.brass);
-  const side = grp(box(4.95, 0.13, 0.06, rm));
-  for (const x of [-2.4, -0.8, 0.8, 2.4]) { const c = cylZ(0.09, 0.12, bm, 14); c.position.x = x; side.add(c); }
+  const side = grp(box(5.35, 0.13, 0.06, rm));
+  for (const x of [-2.55, -0.85, 0.85, 2.55]) { const c = cylZ(0.09, 0.12, bm, 14); c.position.x = x; side.add(c); }
   add('side' + sd, {obj: side, Afn: () => sideRodA(s), B: pose([-1.4, 0.4, s * 1.12], [0, 0, 0]), d: 0.58 + 0.04 * (s > 0), ex: [0, 2.4, s * 3.3], tw: {axis: [1, 0, 0], ang: s * 1.1}, arc: 1.3, label: 'Боковая тяга'});
   add('main' + sd, {obj: grp(box(ROD.L + 0.1, 0.16, 0.07, rm)), Afn: () => {
     const g = mainGeom(s);
@@ -653,7 +663,7 @@ for (const sd of [1, -1]) {
   const pts = () => {
     const ph = dyn.phi + (sd > 0 ? 0 : PI / 2);
     const E = [ROD.drvX[1] + 0.2 * Math.cos(ph + PI / 2), 0.8 + 0.2 * Math.sin(ph + PI / 2)];
-    const Lk = [3.1, 1.45 + 0.26 * Math.sin(ph + PI / 2)];
+    const Lk = [X(3.1), 1.45 + 0.26 * Math.sin(ph + PI / 2)];
     const g = mainGeom(sd), Cx = [g.xc - 0.55, 1.12 + 0.12 * Math.sin(ph)];
     return {E, Lk, Cx, X: [g.xc, ROD.yc]};
   };
@@ -725,7 +735,7 @@ for (const [id, xA, xB] of [['hatch1', -9.4, -9.0], ['hatch2', -6.9, -13.4]]) {
 
 // рой мелких деталей: каждая едет из своей точки в свою, вместе со своим модулем
 class Swarm {
-  constructor(geo, mt, mod, items) { this.mod = mod; this.items = items; this.mesh = new THREE.InstancedMesh(geo, mt, items.length); this.mesh.castShadow = true; this.mesh.receiveShadow = true; this.mesh.frustumCulled = false; scene.add(this.mesh); swarms.push(this); }
+  constructor(geo, mt, mod, items) { items.forEach((it) => { it.a.x = X(it.a.x); }); this.mod = mod; this.items = items; this.mesh = new THREE.InstancedMesh(geo, mt, items.length); this.mesh.castShadow = true; this.mesh.receiveShadow = true; this.mesh.frustumCulled = false; scene.add(this.mesh); swarms.push(this); }
 }
 const swarms = [];
 const _sm = new THREE.Matrix4(), _spp = new THREE.Vector3(), _sqq = new THREE.Quaternion(), _sss = new THREE.Vector3();
@@ -1198,7 +1208,7 @@ function frame(now) {
   st.textContent = stage[2]; pc.textContent = Math.round(p * 100) + '%';
   sp.textContent = Math.round(v * 3.6) + ' км/ч';
   wg.textContent = String(['b1', 'b2', 'b3'].filter((id) => byName[id + 'U'].morph.morphTargetInfluences[0] > 0.97 && byName[id + 'L'].morph.morphTargetInfluences[0] > 0.97).length);
-  const len = lerp(21, 31, sstep(0.36, 0.84, p));
+  const len = lerp(24.2, 31, sstep(0.36, 0.84, p));
   ln.textContent = len.toFixed(0) + ' м';
   updatePanels(p, v); updateSpec(p);
   if (document.activeElement !== sl) sl.value = Math.round(p * 1000);
