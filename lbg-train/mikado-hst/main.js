@@ -3,7 +3,11 @@
 // ключевых кадров нет. Оболочки (котёл, бак, бункер) меняют форму через morph target: цилиндр становится кузовом.
 import * as THREE from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
+import {EffectComposer} from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass} from 'three/addons/postprocessing/RenderPass.js';
+import {GTAOPass} from 'three/addons/postprocessing/GTAOPass.js';
+import {OutputPass} from 'three/addons/postprocessing/OutputPass.js';
+import {ShaderPass} from 'three/addons/postprocessing/ShaderPass.js';
 
 const PI = Math.PI;
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
@@ -12,7 +16,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const hash = (i) => { const s = Math.sin(i * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
 
 const C = {
-  bg: 0xf1ede4, black: 0x1f2125, steel: 0xa4a9b0, brass: 0xb98d3a, white: 0xf6f4f0,
+  bg: 0xfaf6ee, black: 0x1f2125, steel: 0xa4a9b0, brass: 0xb98d3a, white: 0xf6f4f0,
   burg: 0x651e32, glass: 0x141d27, dark: 0x30343a, light: 0xd9dbde,
 };
 
@@ -21,17 +25,30 @@ const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({antialias: true, preserveDrawingBuffer: true});
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.VSMShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.toneMappingExposure = 1.12;
 app.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(C.bg);
-scene.fog = new THREE.Fog(C.bg, 70, 190);
-const pm = new THREE.PMREMGenerator(renderer);
-scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.75;
-const camera = new THREE.PerspectiveCamera(32, 1, 0.5, 400);
+scene.fog = new THREE.Fog(C.bg, 60, 170);
+// студия: мягкие боксы света над тёплым полом, как в примерах навыка
+{
+  const env = new THREE.Scene();
+  env.background = new THREE.Color(0xe6e0d4);
+  const sb = (w, h, x, y, z, k, tint = [1, 0.985, 0.95]) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({color: new THREE.Color(...tint).multiplyScalar(k), side: THREE.DoubleSide}));
+    m.position.set(x, y, z); m.lookAt(0, 0, 0); env.add(m);
+  };
+  sb(16, 7, -12, 11, 9, 3.0); sb(10, 10, 11, 14, -7, 2.2); sb(20, 3, 2, 5, 17, 1.7); sb(12, 4, -14, 4, -10, 1.2, [0.9, 0.95, 1]);
+  const g = new THREE.Mesh(new THREE.CircleGeometry(40, 32), new THREE.MeshBasicMaterial({color: 0xcfc6b6, side: THREE.DoubleSide}));
+  g.rotation.x = -PI / 2; g.position.y = -1.5; env.add(g);
+  const pm = new THREE.PMREMGenerator(renderer);
+  scene.environment = pm.fromScene(env, 0.03).texture;
+  scene.environmentIntensity = 0.85;
+  pm.dispose();
+}
+const camera = new THREE.PerspectiveCamera(32, 1, 0.5, 1500);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.07;
@@ -41,29 +58,83 @@ controls.maxDistance = 90;
 const TARGET = new THREE.Vector3(-2, 2.2, 0);
 controls.target.copy(TARGET);
 
+const INK_FRAG = `
+  uniform sampler2D tDiffuse; uniform sampler2D tDepth; uniform sampler2D tNormal;
+  uniform float uNear; uniform float uFar; uniform vec2 uPx; uniform vec3 uInk; uniform float uStrength;
+  varying vec2 vUv;
+  float lz(vec2 uv){ float d = texture2D(tDepth, uv).x; return uNear * uFar / (uFar - d * (uFar - uNear)); }
+  vec3 nn(vec2 uv){ return normalize(texture2D(tNormal, uv).xyz * 2.0 - 1.0); }
+  void main(){
+    vec4 c = texture2D(tDiffuse, vUv);
+    float z0 = lz(vUv);
+    float zl = lz(vUv - vec2(uPx.x, 0.0)), zr = lz(vUv + vec2(uPx.x, 0.0));
+    float zd = lz(vUv - vec2(0.0, uPx.y)), zu = lz(vUv + vec2(0.0, uPx.y));
+    float lap = (abs(zl + zr - 2.0 * z0) + abs(zu + zd - 2.0 * z0)) / max(z0, 1e-3);
+    float eD = smoothstep(0.004, 0.016, lap);
+    vec3 n0 = nn(vUv);
+    float eN = max(max(1.0 - dot(n0, nn(vUv - vec2(uPx.x, 0.0))), 1.0 - dot(n0, nn(vUv + vec2(uPx.x, 0.0)))),
+                   max(1.0 - dot(n0, nn(vUv - vec2(0.0, uPx.y))), 1.0 - dot(n0, nn(vUv + vec2(0.0, uPx.y)))));
+    float e = max(eD, smoothstep(0.3, 0.6, eN));
+    e *= 1.0 - smoothstep(70.0, 130.0, z0);
+    c.rgb = mix(c.rgb, uInk, e * uStrength);
+    gl_FragColor = c;
+  }`;
+let composer, gtao, inkPass;
+const QUAL = {ao: true};
+window.__quality = (o) => { Object.assign(QUAL, o); if (o.low !== undefined) LOWU.value = o.low ? 1 : 0; if (gtao) gtao.needsSwap = QUAL.ao; if (o.shadow) { sun.shadow.mapSize.set(o.shadow, o.shadow); sun.shadow.map?.dispose(); sun.shadow.map = null; } if (o.pr) { renderer.setPixelRatio(o.pr); resize(); } };
+function buildComposer() {
+  const rt = new THREE.WebGLRenderTarget(4, 4, {type: THREE.HalfFloatType, samples: 0});
+  composer = new EffectComposer(renderer, rt);
+  composer.addPass(new RenderPass(scene, camera));
+  gtao = new GTAOPass(scene, camera, 4, 4);
+  gtao.output = GTAOPass.OUTPUT.Default;
+  gtao.blendIntensity = 0.9;
+  gtao.updateGtaoMaterial({radius: 0.5, distanceExponent: 1.4, thickness: 1.0, scale: 1.0, samples: 12, distanceFallOff: 1.0, screenSpaceRadius: false});
+  gtao.updatePdMaterial({lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12});
+  gtao.normalMaterial.side = THREE.DoubleSide;
+  // слабая машина: AO выключается, но карты нормалей и глубины для контура остаются
+  const gtaoRender = gtao.render.bind(gtao);
+  gtao.render = (r, writeBuffer, readBuffer, ...rest) => {
+    if (QUAL.ao) return gtaoRender(r, writeBuffer, readBuffer, ...rest);
+    gtao._overrideVisibility();
+    gtao._renderOverride(r, gtao.normalMaterial, gtao.normalRenderTarget, 0x7777ff, 1.0);
+    gtao._restoreVisibility();
+  };
+  composer.addPass(gtao);
+  inkPass = new ShaderPass(new THREE.ShaderMaterial({
+    uniforms: {tDiffuse: {value: null}, tDepth: {value: gtao.depthTexture}, tNormal: {value: gtao.normalTexture}, uNear: {value: camera.near}, uFar: {value: camera.far},
+      uPx: {value: new THREE.Vector2(1 / 1920, 1 / 1080)}, uInk: {value: new THREE.Color().setRGB(0.07, 0.06, 0.055, THREE.LinearSRGBColorSpace)}, uStrength: {value: 0.55}},
+    vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+    fragmentShader: INK_FRAG,
+  }));
+  composer.addPass(inkPass);
+  composer.addPass(new OutputPass());
+}
+
 const sun = new THREE.DirectionalLight(0xfff4e4, 2.4);
 sun.position.set(-18, 38, 26);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096, 4096);
+sun.shadow.mapSize.set(2048, 2048);
 Object.assign(sun.shadow.camera, {left: -44, right: 44, top: 30, bottom: -30, near: 5, far: 120});
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.04;
-sun.shadow.radius = 4;
+sun.shadow.radius = 6;
+sun.shadow.blurSamples = 16;
 scene.add(sun);
 scene.add(new THREE.HemisphereLight(0xffffff, 0xd9d0c0, 0.5));
 
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(500, 500), new THREE.MeshStandardMaterial({color: 0xe9e4d9, roughness: 1, metalness: 0}));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000), new THREE.MeshStandardMaterial({color: 0xe3ddd0, roughness: 1, metalness: 0}));
 ground.rotation.x = -PI / 2;
 ground.position.y = -0.14;
 ground.receiveShadow = true;
 scene.add(ground);
-const ballast = new THREE.Mesh(new THREE.BoxGeometry(400, 0.12, 3.6), new THREE.MeshStandardMaterial({color: 0xc9c0b0, roughness: 1}));
+const ballast = new THREE.Mesh(new THREE.BoxGeometry(1200, 0.12, 3.6), new THREE.MeshStandardMaterial({color: 0xc9c0b0, roughness: 1}));
 ballast.position.y = -0.2;
 ballast.receiveShadow = true;
 scene.add(ballast);
 const railMat = new THREE.MeshStandardMaterial({color: 0x8d9198, roughness: 0.4, metalness: 0.7});
 for (const s of [-1, 1]) {
-  const r = new THREE.Mesh(new THREE.BoxGeometry(400, 0.14, 0.1), railMat);
+  const r = new THREE.Mesh(new THREE.BoxGeometry(1200, 0.14, 0.1), railMat);
   r.position.set(0, -0.07, s * 0.7175);
   r.receiveShadow = true;
   scene.add(r);
@@ -87,35 +158,52 @@ function placeSleepers(S) {
 const mats = [];
 const mat = (c, o = {}) => { const m = new THREE.MeshStandardMaterial({color: c, roughness: 0.5, metalness: 0.45, envMapIntensity: 0.6, ...o}); mats.push(m); return m; };
 
-// краска кузовной оболочки: чёрный котёл превращается в белый кузов с окнами и бордовой полосой
-function shellMaterial(up, win, bands) {
-  const m = new THREE.MeshStandardMaterial({color: C.black, roughness: 0.62, metalness: 0.05, envMapIntensity: 0.18, side: THREE.DoubleSide});
-  const uni = {uM: {value: 0}, uUp: {value: up}, uWin: {value: win}, uBands: {value: bands}};
+// кузовная оболочка: ржавый чёрный металл с клёпкой превращается в белый лакированный кузов с вдавленными окнами.
+// Всё нарисовано в шейдере по координатам оболочки, поэтому едет и меняет форму вместе с ней.
+const LOWU = {value: 0};
+function shellMaterial(up, win, bands, dimA, dimB) {
+  const m = new THREE.MeshPhysicalMaterial({color: C.black, roughness: 0.6, metalness: 0.1, envMapIntensity: 0.7, clearcoat: 1, clearcoatRoughness: 0.2, side: THREE.DoubleSide});
+  const uni = {uM: {value: 0}, uUp: {value: up}, uWin: {value: win}, uBands: {value: bands}, uDimA: {value: new THREE.Vector2(...dimA)}, uDimB: {value: new THREE.Vector2(...dimB)}};
   m.userData.uni = uni;
   m.onBeforeCompile = (sh) => {
-    Object.assign(sh.uniforms, uni);
+    Object.assign(sh.uniforms, uni); sh.uniforms.uLow = LOWU;
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vP;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = uv;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
 varying vec2 vP;
-uniform float uM,uUp,uWin,uBands;
+uniform float uM,uUp,uWin,uBands,uLow; uniform vec2 uDimA,uDimB;
 float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
-float fbm(vec2 p){ return 0.5 * vn(p) + 0.25 * vn(p * 2.1) + 0.125 * vn(p * 4.3) + 0.0625 * vn(p * 8.7); }`)
+float fbm(vec2 p){ return 0.5 * vn(p) + 0.25 * vn(p * 2.1) + 0.125 * vn(p * 4.3) + 0.0625 * vn(p * 8.7); }
+float line(float x, float w){ return 1.0 - smoothstep(0.0, w, abs(fract(x + 0.5) - 0.5)); }
+vec3 perturbN(vec3 sp, vec3 sn, vec2 dH, float fd){
+  vec3 sx = normalize(dFdx(sp)), sy = normalize(dFdy(sp));
+  vec3 r1 = cross(sy, sn), r2 = cross(sn, sx);
+  float det = dot(sx, r1) * fd;
+  vec3 g = sign(det) * (dH.x * r1 + dH.y * r2);
+  return normalize(abs(det) * sn - g);
+}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       float u = vP.x, v = vP.y;
       float n = fbm(vec2(u * 14.0, v * 10.0));
       float n2 = fbm(vec2(u * 9.0, v * 6.0) + 3.0);
       float k = smoothstep(0.0, 0.12, uM * 1.28 - (0.3 * n + 0.7 * u));
-      float sdU = abs(fract(u * 6.0 + 0.5) - 0.5), sdV = abs(fract(v * 4.0 + 0.5) - 0.5);
-      float seam = max(1.0 - smoothstep(0.0, 0.025, sdU), 1.0 - smoothstep(0.0, 0.03, sdV));
-      float rv = length(fract(vec2(u * 6.0 * 9.0, v * 4.0 * 7.0)) - 0.5);
-      float rivet = (1.0 - smoothstep(0.14, 0.24, rv)) * (1.0 - smoothstep(0.05, 0.09, min(sdU, sdV)));
+      vec2 dim = mix(uDimA, uDimB, uM);
+      float cu = u * dim.x, cv = v * dim.y;
+      // швы: продольные раз в 1,0 м, поперечные раз в 1,3 м; заклёпки по швам
+      float sU = line(cu / 1.0, 0.03), sV = line(cv / 1.3, 0.03);
+      float seam = max(sU, sV);
+      float nearSeam = max(1.0 - smoothstep(0.0, 0.14, abs(fract(cu / 1.0 + 0.5) - 0.5)), 1.0 - smoothstep(0.0, 0.14, abs(fract(cv / 1.3 + 0.5) - 0.5)));
+      float rv = length(fract(vec2(cu, cv) / 0.1) - 0.5);
+      float rivet = (1.0 - smoothstep(0.16, 0.30, rv)) * nearSeam;
+      // котельные бандажи только у паровоза
+      float bandH = 0.0;
+      for (int i = 0; i < 4; i++) bandH += 1.0 - smoothstep(0.0, 0.10, abs(cu - (float(i) * 1.15 + 0.3)));
+      bandH = clamp(bandH, 0.0, 1.0) * uBands;
       vec3 steelBlack = vec3(0.012, 0.013, 0.015);
-      float band = (1.0 - smoothstep(0.0, 0.012, abs(u - 0.5))) + (1.0 - smoothstep(0.0, 0.012, abs(u - 0.14))) + (1.0 - smoothstep(0.0, 0.012, abs(u - 0.86)));
-      vec3 loco = mix(steelBlack, vec3(0.07, 0.075, 0.08), clamp(band, 0.0, 1.0) * uBands);
+      vec3 loco = mix(steelBlack, vec3(0.07, 0.075, 0.08), bandH);
       loco = mix(loco, vec3(0.11, 0.04, 0.022), smoothstep(0.6, 0.78, n2) * 0.8);
-      loco += vec3(0.02) * seam + vec3(0.04) * rivet;
+      loco += vec3(0.018) * seam + vec3(0.05) * rivet;
       vec3 body = vec3(0.90, 0.89, 0.87);
       body = mix(body, body * vec3(0.72, 0.70, 0.66), smoothstep(0.55, 0.82, fbm(vec2(u * 5.0, v * 4.0) + 7.0)) * 0.55);
       float shoulder = min(v, 1.0 - v);
@@ -125,8 +213,22 @@ float fbm(vec2 p){ return 0.5 * vn(p) + 0.25 * vn(p * 2.1) + 0.125 * vn(p * 4.3)
       float win = wv * wu * uWin * uUp;
       vec3 col = mix(body, vec3(0.130, 0.013, 0.032), stripe);
       col = mix(col, vec3(0.006, 0.012, 0.02), win);
-      col = col * (1.0 - 0.28 * seam) + vec3(0.03) * rivet;
-      diffuseColor.rgb = mix(loco, col, k);`);
+      col = col * (1.0 - 0.18 * seam) + vec3(0.025) * rivet;
+      diffuseColor.rgb = mix(loco, col, k);`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+      roughnessFactor = mix(0.62, 0.30, k) * (0.8 + 0.5 * n) + 0.25 * bandH * (1.0 - k);`)
+      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+      metalnessFactor = mix(0.28, 0.04, k);`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+      {
+        float hL = bandH * 1.2 - sU * 0.5 - sV * 0.5 + rivet * 0.9 + n * 0.25;
+        float hT = -win * 1.4 - (max(sU * step(0.5, fract(cu / 3.0)), sV) * 0.5) + rivet * 0.5 + stripe * 0.12 + n * 0.1;
+        float hh = mix(hL, hT, k);
+        vec2 dH = vec2(dFdx(hh), dFdy(hh)) * 2.2;
+        normal = perturbN(-vViewPosition, normal, dH, faceDirection);
+      }`)
+      .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+      material.clearcoat = k * 0.7; material.clearcoatRoughness = 0.16;`);
   };
   return m;
 }
@@ -198,7 +300,7 @@ function add(name, o) {
   root.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; } });
   scene.add(root);
   const P = {name, root, obj: o.obj, A: o.A, Afn: o.Afn, B: o.B, d: o.d ?? hash(parts.length + 3), ex: o.ex, tw: o.tw, flip: o.flip, arc: o.arc ?? 1.2,
-    label: o.label, tint: o.tint, morph: o.morph, spin: o.spin, wheel: o.wheel, shell: o.shell};
+    label: o.label, tint: o.tint, morph: o.morph, spin: o.spin, wheel: o.wheel, shell: o.shell, mod: o.mod, sh: o.sh, emis: o.emis};
   parts.push(P);
   byName[name] = P;
   return P;
@@ -223,7 +325,7 @@ SHELLS.forEach((S) => {
   const mod = {k: S.k, side: SIDE[S.k], dir: ROLL[S.k], ycA: S.A.yc, ycB: S.B.yc};
   for (const up of [1, 0]) {
     const {g, cA, cB} = shellGeo(S.A, S.B, !!up);
-    const m = new THREE.Mesh(g, shellMaterial(up, S.win, S.bands));
+    const m = new THREE.Mesh(g, shellMaterial(up, S.win, S.bands, [S.A.L, Math.PI * S.A.w / 2], [S.B.L, 5.2]));
     m.updateMorphTargets();
     const sd = SIDE[S.k];
     const pz = (w) => (up ? 1 : -1) * sd * w / 2;
@@ -317,6 +419,14 @@ function bogieGeo(len) {
   for (const s of [1, -1]) g.add(at(box(len, 0.15, 0.15, m), 0, 0, s * 1.2));
   for (const x of [-1, 1]) g.add(at(box(0.14, 0.14, 2.5, m), x * (len / 2 - 0.1), 0, 0));
   const bol = box(0.3, 0.14, 2.3, mat(C.steel)); g.add(bol);
+  const sm = mat(C.steel, {metalness: 0.85, roughness: 0.3}), dm = mat(C.dark, {metalness: 0.7, roughness: 0.4}), brm = mat(0x6d7077, {metalness: 0.8, roughness: 0.35});
+  const helix = new THREE.CatmullRomCurve3(Array.from({length: 40}, (_, i) => { const t = i / 39; return new THREE.Vector3(Math.cos(t * PI * 10) * 0.1, t * 0.3 - 0.15, Math.sin(t * PI * 10) * 0.1); }));
+  const hg = new THREE.TubeGeometry(helix, 120, 0.018, 6);
+  for (const x of [-1.2, 1.2]) for (const z of [-1.2, 1.2]) { const sp = new THREE.Mesh(hg, sm); sp.position.set(x, 0.22, z * 0.96); g.add(sp); }
+  for (const x of [-1.2, 1.2]) {
+    const mo = cylZ(0.2, 1.1, dm, 18); mo.position.set(x * 0.85, 0.1, 0); g.add(mo);
+    for (const z of [-0.45, 0.45]) { const bd = cylZ(0.3, 0.03, brm, 24); bd.position.set(x, -0.04, z); g.add(bd); }
+  }
   return {g, m};
 }
 const BOGIES = [
@@ -377,7 +487,7 @@ add('cabFront', {obj: new THREE.Mesh(ringGeo(3.0, 2.8, 2.6, 2.5, 0.1), cabM), A:
 const cabM2 = mat(C.black, {metalness: 0.4});
 add('cabBack', {obj: new THREE.Mesh(ringGeo(3.0, 2.8, 2.6, 2.5, 0.1), cabM2), A: pose([-3.3, 2.85, 0]), B: pose([3.8, 2.4, 0]), d: 0.4, ex: [-1.5, 3.2, -3.4], tw: {axis: [0, 1, 0], ang: -1.2}, arc: 1.6, label: 'Задняя стенка', tint: [C.black, C.dark, cabM2]});
 const roofM = mat(C.black, {metalness: 0.4});
-add('cabRoof', {obj: grp(box(3.0, 0.1, 3.0, roofM)), A: pose([-1.9, 4.3, 0]), B: pose([11.45, 3.66, 0], [0, 0, -0.30], [0.72, 1, 0.6]), d: 0.45, ex: [-1.0, 6.0, 1.0], tw: {axis: [0, 0, 1], ang: 0.8}, flip: true, arc: 3.0, label: 'Крыша кабины', tint: [C.black, C.glass, roofM]});
+add('cabRoof', {obj: grp(box(3.0, 0.1, 3.0, roofM)), A: pose([-1.9, 4.3, 0]), B: pose([11.45, 3.74, 0], [0, 0, -0.30], [0.72, 0.7, 0.6]), d: 0.45, ex: [-1.0, 6.0, 1.0], tw: {axis: [0, 0, 1], ang: 0.8}, flip: true, arc: 3.0, label: 'Крыша кабины', tint: [C.black, C.glass, roofM]});
 for (const s of [1, -1]) {
   const m = mat(C.black, {metalness: 0.4});
   add('cabW' + (s > 0 ? 'L' : 'R'), {obj: grp(new THREE.Mesh(wallGeo(2.9, 2.4, 0.08), m)), A: pose([-1.9, 3.05, s * 1.45]), B: pose([5.4, 1.9, s * 1.56], [0, 0, 0], [0.38, 0.88, 1]), d: 0.3, ex: [-1.5, 1.4, s * 3.6], tw: {axis: [1, 0, 0], ang: s * 1.4}, arc: 1.5, label: 'Стенка кабины', tint: [C.black, C.burg, m]});
@@ -424,8 +534,8 @@ for (const [car, x] of [[1, 5.4], [2, 2.4], [3, -7.9]]) { /* ориентиры 
   add('hrR', {obj: grp(box(3.0, 0.1, 0.1, s2)), A: pose([2.6, 3.45, -1.2]), B: pose([3.7, 4.52, 0], [0, 0, -0.87], [0.41, 1, 1]), d: 0.56, ex: [0.5, 2.4, -2.0], tw: {axis: [0, 0, 1], ang: -1.2}, arc: 2.0, label: 'Поручень'});
   add('pipe', {obj: grp(box(4.0, 0.12, 0.12, s3)), A: pose([3.0, 4.05, 0.25]), B: pose([3.3, 5.0, 0], [0, PI / 2, 0], [0.4, 1, 1]), d: 0.62, ex: [0.0, 3.2, 0.8], tw: {axis: [0, 1, 0], ang: 1.5}, arc: 2.4, label: 'Паровая труба'});
   for (const s of [1, -1]) {
-    const lm = mat(C.steel, {metalness: 0.7, emissive: 0x000000});
-    add('mark' + (s > 0 ? 'L' : 'R'), {obj: grp(cyl(0.12, 0.16, lm, 14)), A: pose([7.1, 1.35, s * 0.95]), B: pose([13.6, 1.85, s * 0.55], [0, 0, 0], [1, 0.8, 0.8]), d: 0.4, ex: [1.0, 1.2, s * 2.0], arc: 1.8, label: 'Маркерный огонь'});
+    const lm = new THREE.MeshStandardMaterial({color: 0xdfe6ee, emissive: 0xcfe6ff, emissiveIntensity: 0, roughness: 0.25}); mats.push(lm);
+    add('mark' + (s > 0 ? 'L' : 'R'), {obj: grp(cyl(0.12, 0.16, lm, 14)), A: pose([7.1, 1.35, s * 0.95]), B: pose([13.6, 1.85, s * 0.55], [0, 0, 0], [1, 0.8, 0.8]), d: 0.4, ex: [1.0, 1.2, s * 2.0], arc: 1.8, label: 'Маркерный огонь', emis: lm});
   }
   const wm = mat(C.brass, {metalness: 0.7});
   add('whistle', {obj: grp(cylV(0.1, 0.5, wm, 14)), A: pose([1.0, 4.25, 0.5]), B: pose([-4.0, 4.1, 0], [0, 0, 0], [3.0, 0.4, 5.5]), d: 0.58, ex: [0.0, 3.4, 1.0], tw: {axis: [0, 0, 1], ang: 2.0}, flip: true, arc: 2.2, label: 'Свисток'});
@@ -443,6 +553,149 @@ byName.chim.hg = {axis: [0, 0, 1], piv: [0, -0.5, 0], ang: -1.4};
 byName.pilot.hg = {axis: [0, 0, 1], piv: [-0.5, -0.4, 0], ang: -0.7};
 byName.door.hg = {axis: [0, 1, 0], piv: [0, 0, 1.0], ang: 1.3};
 
+
+// ---------- детализация (подменяем простые формы на модели с профилем) ----------
+const lathe = (pts, mt, seg = 32) => new THREE.Mesh(new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg), mt);
+function swap(name, group, tintMat) {
+  const P = byName[name];
+  P.root.remove(P.obj); P.obj = group; P.root.add(group);
+  group.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
+  if (tintMat && P.tint) P.tint[2] = tintMat;
+}
+{
+  const bm = () => mat(C.black, {metalness: 0.5, roughness: 0.5}), steel = mat(C.steel, {metalness: 0.85, roughness: 0.3}), brass = mat(C.brass, {metalness: 0.85, roughness: 0.3});
+  // дымовая труба: раструб, шейка, венчик
+  let mt = bm();
+  swap('chim', grp(lathe([[0.62, -0.5], [0.5, -0.46], [0.36, -0.3], [0.27, -0.1], [0.25, 0.3], [0.29, 0.45], [0.42, 0.52], [0.42, 0.56], [0.27, 0.56], [0.0, 0.5]], mt)), mt);
+  // паровой колпак и песочница: купола с кольцами и клапаном
+  mt = bm();
+  swap('dome', grp(lathe([[0.7, -0.35], [0.66, -0.3], [0.55, -0.15], [0.5, 0.1], [0.5, 0.3], [0.4, 0.42], [0.2, 0.5], [0.0, 0.52]], mt), at(cylV(0.08, 0.3, brass, 12), 0, 0.62, 0), at(lathe([[0.2, 0], [0.12, 0.05], [0.0, 0.08]], brass, 12), 0, 0.48, 0)), mt);
+  mt = bm();
+  swap('sand', grp(lathe([[0.55, -0.3], [0.5, -0.25], [0.45, 0], [0.45, 0.2], [0.34, 0.32], [0.14, 0.38], [0.0, 0.4]], mt), at(cylV(0.18, 0.06, steel, 14), 0, 0.42, 0)), mt);
+  mt = bm();
+  swap('whistle', grp(lathe([[0.1, -0.2], [0.08, 0], [0.12, 0.2], [0.0, 0.26]], mt, 12), at(cylV(0.04, 0.3, brass, 8), 0, -0.3, 0)), mt);
+  // дверца дымовой коробки: обод, тарелка, запоры, штурвал
+  mt = mat(C.dark, {metalness: 0.6});
+  const door = new THREE.Group();
+  door.add(cyl(1.0, 0.1, mt, 48));
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.05, 8, 48), steel); rim.rotation.y = PI / 2; rim.position.x = 0.05; door.add(rim);
+  const boss = lathe([[0.0, 0], [0.34, 0], [0.3, 0.06], [0.0, 0.1]], steel, 24); boss.rotation.z = -PI / 2; boss.position.x = 0.05; door.add(boss);
+  for (let i = 0; i < 8; i++) { const a = i * PI / 4; const dg = box(0.14, 0.2, 0.08, steel); dg.position.set(0.08, Math.sin(a) * 0.9, Math.cos(a) * 0.9); dg.rotation.x = -a; door.add(dg); }
+  const hw = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.025, 6, 20), brass); hw.rotation.y = PI / 2; hw.position.x = 0.2; door.add(hw);
+  for (let i = 0; i < 4; i++) { const sp = box(0.02, 0.4, 0.03, brass); sp.position.x = 0.2; sp.rotation.x = i * PI / 4; door.add(sp); }
+  door.add(at(cyl(0.05, 0.2, steel, 8), 0.14, 0, 0));
+  swap('door', door, mt);
+  // фара: корпус, линза, козырёк
+  mt = mat(C.steel, {metalness: 0.8});
+  const lensM = new THREE.MeshStandardMaterial({color: 0xffffff, emissive: 0xfff3d0, emissiveIntensity: 0.0, roughness: 0.2}); mats.push(lensM);
+  byName.lamp.emis = lensM;
+  swap('lamp', grp(cyl(0.3, 0.45, mt, 24), at(cyl(0.24, 0.05, lensM, 24), 0.24, 0, 0), at(new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.2, 20, 1, true, -1.2, 2.4), mt), 0.18, 0.05, 0)), mt);
+  // пилот: рейки клином и рама
+  mt = bm();
+  const pil = new THREE.Group();
+  for (let i = -5; i <= 5; i++) { const bar = box(1.1, 0.05, 0.09, mt); bar.position.set(0.0, 0.0 - Math.abs(i) * 0.012, i * 0.2); bar.rotation.z = -0.3 - Math.abs(i) * 0.02; pil.add(bar); }
+  for (const z of [-1.1, 1.1]) pil.add(at(box(1.1, 0.12, 0.08, steel), 0.0, -0.1, z));
+  pil.add(at(box(0.08, 0.5, 2.3, mt), 0.52, -0.2, 0));
+  for (const z of [-0.5, 0.5]) pil.add(at(cylV(0.04, 0.4, steel, 8), 0.6, -0.4, z));
+  swap('pilot', pil, mt);
+  // крыша кабины: арка с выступом. На скоростном поезде становится выгнутым лобовым стеклом
+  mt = bm();
+  const archG = new THREE.CylinderGeometry(1.9, 1.9, 3.0, 28, 1, true, PI / 2 - 0.85, 1.7); archG.rotateZ(PI / 2); archG.translate(0, -1.9, 0);
+  mt.side = THREE.DoubleSide;
+  const arch = new THREE.Mesh(archG, mt);
+  swap('cabRoof', grp(arch, at(box(3.1, 0.04, 0.04, steel), 0, -0.02, 1.43), at(box(3.1, 0.04, 0.04, steel), 0, -0.02, -1.43)), mt);
+  // гармошка: четыре гофры вместо одной рамки
+  for (const [id, a] of [['cabFront', 0], ['cabBack', 1]]) {
+    mt = mat(C.black, {metalness: 0.2, roughness: 0.8});
+    const bel = new THREE.Group();
+    for (let i = 0; i < 4; i++) { const r = new THREE.Mesh(ringGeo(3.0 + (i % 2) * 0.06, 2.8 + (i % 2) * 0.06, 2.6, 2.5, 0.05), mt); r.position.x = (i - 1.5) * 0.12; bel.add(r); }
+    swap(id, bel, mt);
+  }
+  // паровые трубы вдоль котла: изогнутые, с фланцами. На поезде лежат кабель-каналами по крыше
+  for (const sd of [1, -1]) {
+    mt = mat(C.steel, {metalness: 0.85, roughness: 0.3});
+    const crv = new THREE.CatmullRomCurve3([new THREE.Vector3(-2, 0.3, 0), new THREE.Vector3(-1.2, 0.5, 0), new THREE.Vector3(0.2, 0.15, 0), new THREE.Vector3(1.4, -0.3, 0), new THREE.Vector3(2.1, -0.6, 0)]);
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(crv, 40, 0.07, 8), mt);
+    const pg = grp(tube); for (const t of [0.05, 0.5, 0.95]) { const f = cyl(0.12, 0.04, brass, 12); const p0 = crv.getPoint(t); f.position.copy(p0); f.rotation.z = PI / 2 + Math.atan2(crv.getTangent(t).y, crv.getTangent(t).x); pg.add(f); }
+    add('spipe' + (sd > 0 ? 'L' : 'R'), {obj: pg, A: pose([2.7, 3.55, sd * 1.15]), B: pose([6.7, 3.95, sd * 0.9], [0, 0, 0], [1.2, 0.2, 1]), d: 0.2, arc: 0.4, label: 'Паровая труба', tint: [C.steel, C.light, mt]});
+  }
+  // поручни котла: две трубы на стойках. Стойки едут вместе с котлом, на поезде встают вдоль крыши
+  for (const sd of [1, -1]) {
+    mt = mat(C.steel, {metalness: 0.9, roughness: 0.25});
+    add('rail' + (sd > 0 ? 'L' : 'R'), {obj: grp(cyl(0.025, 4.6, mt, 8)), A: pose([3.4, 3.75, sd * 1.2]), B: pose([6.6, 3.9, sd * 1.32]), d: 0.16, arc: 0.4, label: 'Поручень'});
+  }
+}
+
+// клапанный механизм Вальсхарта: эксцентриковая тяга, радиальная тяга и комбинационный рычаг, по три штанги на сторону.
+// Точки считаются от угла колеса; на поезде штанги встают тягами у тележек.
+function barAt(p0, p1, z) {
+  return {p: new THREE.Vector3((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2, z), q: Q(0, 0, Math.atan2(p1[1] - p0[1], p1[0] - p0[0])), s: new THREE.Vector3(Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / 2.0, 1, 1)};
+}
+for (const sd of [1, -1]) {
+  const nm = sd > 0 ? 'L' : 'R';
+  const pts = () => {
+    const ph = dyn.phi + (sd > 0 ? 0 : PI / 2);
+    const E = [ROD.drvX[1] + 0.2 * Math.cos(ph + PI / 2), 0.8 + 0.2 * Math.sin(ph + PI / 2)];
+    const Lk = [3.1, 1.45 + 0.26 * Math.sin(ph + PI / 2)];
+    const g = mainGeom(sd), Cx = [g.xc - 0.55, 1.12 + 0.12 * Math.sin(ph)];
+    return {E, Lk, Cx, X: [g.xc, ROD.yc]};
+  };
+  const mk = (id, lab, f, B, d) => {
+    const bm = mat(C.steel, {metalness: 0.9, roughness: 0.28}), pm = mat(C.brass);
+    add(id, {obj: grp(box(2.0, 0.07, 0.04, bm), at(cylZ(0.05, 0.08, pm, 10), -1, 0, 0), at(cylZ(0.05, 0.08, pm, 10), 1, 0, 0)), Afn: f, B, d, arc: 0.4, label: lab});
+  };
+  mk('ecc' + nm, 'Эксцентриковая тяга', () => { const q = pts(); return barAt(q.E, q.Lk, sd * 1.07); }, pose([BOGIE_X[0] - 0.4 * sd, 0.82, sd * 1.12], [0, 0, 0.25 * sd], [0.9, 1, 1]), 0.62);
+  mk('rad' + nm, 'Радиальная тяга', () => { const q = pts(); return barAt(q.Lk, q.Cx, sd * 1.1); }, pose([BOGIE_X[1] - 0.2 * sd, 0.82, sd * 1.12], [0, 0, -0.2 * sd], [0.8, 1, 1]), 0.66);
+  mk('cmb' + nm, 'Комбинационный рычаг', () => { const q = pts(); return barAt(q.Cx, q.X, sd * 1.12); }, pose([BOGIE_X[2] - 0.5 * sd, 0.8, sd * 1.12], [0, 0, 0.1], [0.4, 1, 1]), 0.7);
+}
+// люки бака тендера: из них получаются крышевые блоки хвостового вагона
+for (const [id, xA, xB] of [['hatch1', -9.4, -9.0], ['hatch2', -6.9, -13.4]]) {
+  const mt = mat(C.black, {metalness: 0.5, roughness: 0.45}), br = mat(C.brass, {metalness: 0.85});
+  add(id, {obj: grp(lathe([[0.5, -0.05], [0.46, 0.02], [0.4, 0.12], [0.3, 0.16], [0.0, 0.17]], mt, 24), at(cylV(0.05, 0.1, br, 8), 0, 0.2, 0)), A: pose([xA, 3.4, 0]), B: pose([xB, 3.95, 0], [0, 0, 0], [1.3, 0.9, 1.5]), d: 0.7, arc: 0.4, label: 'Люк', tint: [C.black, C.white, mt]});
+}
+
+// рой мелких деталей: каждая едет из своей точки в свою, вместе со своим модулем
+class Swarm {
+  constructor(geo, mt, mod, items) { this.mod = mod; this.items = items; this.mesh = new THREE.InstancedMesh(geo, mt, items.length); this.mesh.castShadow = true; this.mesh.receiveShadow = true; this.mesh.frustumCulled = false; scene.add(this.mesh); swarms.push(this); }
+}
+const swarms = [];
+const _sm = new THREE.Matrix4(), _spp = new THREE.Vector3(), _sqq = new THREE.Quaternion(), _sss = new THREE.Vector3();
+function swarmUpdate(S, p) {
+  const d = 0.04 + 0.12 * S.mod.k;
+  const w = backOut(sstep(0.30 + 0.05 * d, 0.70 + 0.05 * d, p), 0.7), m = sstep(0.34 + 0.05 * d, 0.84 + 0.05 * d, p), roll = sstep(0.28 + 0.05 * d, 0.60 + 0.05 * d, p);
+  const ay = lerp(S.mod.ycA, S.mod.ycB, m), phi = S.mod.dir * 2 * PI * roll, cs = Math.cos(phi), sn = Math.sin(phi);
+  const rq = new THREE.Quaternion().setFromAxisAngle(X_AXIS, phi);
+  S.items.forEach((it, i) => {
+    _spp.copy(it.a).lerp(it.b, w); _sqq.copy(it.qa).slerp(it.qb, w); _sss.copy(it.sa).lerp(it.sb, w);
+    const ry = _spp.y - ay, rz = _spp.z; _spp.y = ay + ry * cs - rz * sn; _spp.z = ry * sn + rz * cs; _sqq.premultiply(rq);
+    S.mesh.setMatrixAt(i, _sm.compose(_spp, _sqq, _sss));
+  });
+  S.mesh.instanceMatrix.needsUpdate = true;
+}
+{
+  const R = (i, k) => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
+  // уголь: куча на бункере уходит внутрь третьего вагона грузом
+  const coalMod = {k: 3, dir: ROLL[3], ycA: 3.45, ycB: 2.4};
+  const q0 = new THREE.Quaternion();
+  const coal = [];
+  for (let i = 0; i < 160; i++) {
+    const x = -8 + 3.8 * R(i, 1), z = (R(i, 2) - 0.5) * 2.1, hh = 0.5 * Math.max(0, 1 - (z / 1.05) ** 2) * (0.7 + 0.5 * Math.sin((x + 8) / 3.8 * PI));
+    const sc = 0.12 + 0.14 * R(i, 3);
+    coal.push({a: new THREE.Vector3(x, 4.0 + hh + R(i, 4) * 0.12, z), qa: new THREE.Quaternion().setFromEuler(E(R(i, 5) * 6, R(i, 6) * 6, R(i, 7) * 6)), sa: new THREE.Vector3(sc * 1.2, sc * 0.8, sc),
+      b: new THREE.Vector3(-11.8 + 5 * R(i, 8), 1.1 + 0.9 * R(i, 9), (R(i, 10) - 0.5) * 2.2), qb: new THREE.Quaternion().setFromEuler(E(R(i, 11) * 6, R(i, 12) * 6, R(i, 13) * 6)), sb: new THREE.Vector3(sc * 0.9, sc * 0.9, sc * 0.9)});
+  }
+  new Swarm(new THREE.IcosahedronGeometry(1, 1), mat(0x17181b, {metalness: 0.3, roughness: 0.75}), coalMod, coal);
+  // стойки поручней: вдоль котла, потом вдоль крыши головного вагона
+  const stMod = {k: 1, dir: ROLL[1], ycA: 2.9, ycB: 2.4};
+  const posts = [];
+  for (let i = 0; i < 20; i++) {
+    const sd = i % 2 ? 1 : -1, j = Math.floor(i / 2);
+    posts.push({a: new THREE.Vector3(1.2 + j * 0.5, 3.56, sd * 1.2), qa: q0.clone(), sa: new THREE.Vector3(1, 1, 1), b: new THREE.Vector3(4.4 + j * 0.5, 3.7, sd * 1.33), qb: q0.clone(), sb: new THREE.Vector3(1, 1, 1)});
+  }
+  new Swarm(new THREE.CylinderGeometry(0.03, 0.04, 0.34, 8), mat(C.steel, {metalness: 0.9, roughness: 0.25}), stMod, posts);
+}
+
+
 // ---------- гидроцилиндры (кинематические связи между деталями) ----------
 const jacks = [];
 function jack(pa, la, pb, lb) {
@@ -455,8 +708,8 @@ function jack(pa, la, pb, lb) {
 }
 for (const id of ['nose', 'b1', 'b2', 'b3', 'tail']) {
   const sp = id === 'nose' || id === 'b1' ? 'spA' : id === 'b2' ? 'spB' : 'spC';
-  jack(sp + 'L', [0, 0, 0], id + 'U', [0, -0.5, 1.1]);
-  jack(sp + 'R', [0, 0, 0], id + 'L', [0, 0.4, -1.1]);
+  jack(sp + 'L', [0, 0, 0], id + 'U', [0, -0.45, 0.45]);
+  jack(sp + 'R', [0, 0, 0], id + 'L', [0, 0.35, -0.45]);
 }
 BOGIE_X.forEach((x, k) => jack((k < 2 ? 'spA' : k < 4 ? 'spB' : 'spC') + (k % 2 ? 'R' : 'L'), [(x - [8.4, 8.4, -0.65, -0.65, -11, -11][k]) * 0, 0, 0], ['bg_pony', 'bg_eqL', 'bg_eqR', 'bg_tr', 'bg_t1', 'bg_t2'][k], [0.9, 0.1, (k % 2 ? -1 : 1) * 1.2]));
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _q = new THREE.Quaternion();
@@ -498,7 +751,7 @@ const _ax = new THREE.Vector3(), _pl = new THREE.Vector3();
 function poseAll(p) {
   parts.forEach((P, i) => {
     const d = P.d;
-    const op = sstep(0.08 + 0.06 * d, 0.26 + 0.06 * d, p) * (1 - sstep(0.70 + 0.05 * d, 0.88 + 0.05 * d, p)); // створки открыты
+    const op = sstep(0.08 + 0.06 * d, 0.26 + 0.06 * d, p) * (1 - sstep(0.62 + 0.05 * d, 0.80 + 0.05 * d, p)); // створки открыты
     const w0 = sstep(0.30 + 0.05 * d, 0.70 + 0.05 * d, p);
     const w = backOut(w0, P.shell ? 0.7 : 1.2);                                  // скольжение с перелётом
     const m = sstep(0.34 + 0.05 * d, 0.84 + 0.05 * d, p);
@@ -532,6 +785,7 @@ function poseAll(p) {
       P.morph.material.userData.uni.uM.value = m;
     }
     tint(P, m);
+    if (P.emis) P.emis.emissiveIntensity = 2.2 * m;
     // колесо катится по рельсу, пока ползёт вместе с составом
     if (P.wheel) {
       const x = P.root.position.x;
@@ -539,6 +793,7 @@ function poseAll(p) {
       P.lastX = x;
     }
   });
+  swarms.forEach((S) => swarmUpdate(S, p));
 }
 
 // ---------- ход, колёса ----------
@@ -570,12 +825,52 @@ ui.innerHTML = `
  <input id="sl" type="range" min="0" max="1000" value="0">
  <div class="lbg-btns"><button data-v="q">3/4</button><button data-v="s">Сбоку</button><button data-v="f">Спереди</button><button data-v="t">Сверху</button><button data-a="ghost">Прозрачный корпус</button></div>
 </div>
+<div class="lbg-panels">
+ <div class="pn"><h4>Модули</h4><div id="mods"></div></div>
+ <div class="pn"><h4>План по рельсу</h4><svg id="plan" viewBox="0 0 280 64"><line x1="0" y1="40" x2="280" y2="40" stroke="#b8b0a2" stroke-width="2"/></svg></div>
+ <div class="pn"><h4>Ведущее колесо</h4><div class="kv"><span>Диаметр</span><b id="wd">1,60 м</b></div><div class="kv"><span>Обороты</span><b id="wr">0 об/мин</b></div><div class="kv"><span>Шатуны</span><b id="rods">на колёсах</b></div></div>
+</div>
 <div id="lb"></div>`;
 app.appendChild(ui);
 const st = ui.querySelector('#st'), pc = ui.querySelector('#pc'), sp = ui.querySelector('#sp'), sl = ui.querySelector('#sl'), wg = ui.querySelector('#wg'), ln = ui.querySelector('#ln'), lbBox = ui.querySelector('#lb');
 const STAGES = [[0, 0.07, 'Паровоз Mikado 2-8-2'], [0.07, 0.30, 'Раскрытие'], [0.30, 0.72, 'Превращение'], [0.72, 0.94, 'Замки'], [0.94, 1.01, 'Скоростной состав']];
 const LABELS = ['noseU', 'b1U', 'b2U', 'b3U', 'tailU', 'core_b1', 'core_b2', 'spAL', 'chim', 'cabRoof', 'coal', 'pilot'];
 const labelEls = LABELS.map((id) => { const e = document.createElement('div'); e.className = 'lb'; e.textContent = byName[id].label; lbBox.appendChild(e); return {id, e}; });
+
+
+// ---------- панели: состояние модулей, план по рельсу, колесо ----------
+const MODNAMES = [['nose', 'Дымовая коробка', 'Нос'], ['b1', 'Котёл', 'Вагон 1'], ['b2', 'Топка', 'Вагон 2'], ['tail', 'Бункер', 'Вагон 3'], ['b3', 'Бак тендера', 'Хвост']];
+const modsBox = ui.querySelector('#mods'), plan = ui.querySelector('#plan');
+const modRows = MODNAMES.map(([id, a, b]) => {
+  const r = document.createElement('div'); r.className = 'mrow';
+  r.innerHTML = `<span class="mn">${a} <i>›</i> ${b}</span><span class="ms"></span><span class="mb"><i></i></span>`;
+  modsBox.appendChild(r);
+  return {id, ms: r.querySelector('.ms'), bar: r.querySelector('.mb i')};
+});
+const NS = 'http://www.w3.org/2000/svg';
+const planX = (x) => (x + 20) / 38 * 280;
+const planRects = MODNAMES.map(() => { const r = document.createElementNS(NS, 'rect'); r.setAttribute('y', 24); r.setAttribute('height', 14); r.setAttribute('rx', 2); plan.appendChild(r); return r; });
+const planWheels = AXLES.map(() => { const c = document.createElementNS(NS, 'circle'); c.setAttribute('cy', 42); c.setAttribute('r', 2.6); c.setAttribute('fill', '#2b2622'); plan.appendChild(c); return c; });
+const wd = ui.querySelector('#wd'), wr = ui.querySelector('#wr'), rodsEl = ui.querySelector('#rods');
+const f1 = (x) => x.toFixed(2).replace('.', ',');
+function updatePanels(p, v) {
+  MODNAMES.forEach(([id], i) => {
+    const d = 0.04 + 0.12 * i, op = sstep(0.08 + 0.06 * d, 0.26 + 0.06 * d, p) * (1 - sstep(0.62 + 0.05 * d, 0.80 + 0.05 * d, p));
+    const w0 = sstep(0.30 + 0.05 * d, 0.70 + 0.05 * d, p), m = sstep(0.34 + 0.05 * d, 0.84 + 0.05 * d, p);
+    const st = p < 0.07 ? 'паровоз' : op > 0.8 ? 'раскрыт' : w0 > 0 && w0 < 1 ? 'едет' : (p > 0.78 + 0.08 * d && p < 0.94) ? 'замок' : w0 >= 1 ? 'вагон' : 'раскрытие';
+    modRows[i].ms.textContent = st;
+    modRows[i].bar.style.width = Math.round((w0 * 0.6 + m * 0.4) * 100) + '%';
+    const P = byName[id + 'L'], L = lerp(MODS_L[id][0], MODS_L[id][1], m);
+    const rc = planRects[i]; rc.setAttribute('x', planX(P.root.position.x - L / 2)); rc.setAttribute('width', Math.max(2, L / 38 * 280));
+    rc.setAttribute('fill', m > 0.9 ? '#651e32' : '#2b2622'); rc.setAttribute('opacity', 0.55 + 0.4 * m);
+  });
+  AXLES.forEach((a, i) => planWheels[i].setAttribute('cx', planX(byName[a.id].root.position.x)));
+  const d1 = byName.ax_d1, r = d1.wheel.r0 * d1.root.scale.x;
+  wd.textContent = f1(r * 2) + ' м';
+  wr.textContent = Math.round(v / (2 * PI * r) * 60) + ' об/мин';
+  rodsEl.textContent = p < 0.1 ? 'на колёсах' : p < 0.7 ? 'сняты' : 'тяги тележек';
+}
+const MODS_L = {nose: [1.55, 5.0], b1: [4.25, 5.2], b2: [3.4, 10.0], tail: [3.8, 5.0], b3: [7.4, 5.0]};
 
 function setView(k) {
   const V = {q: [24, 9, 26], s: [-2, 4, 52], f: [52, 5, 0.01], t: [-2, 56, 2]}[k];
@@ -602,10 +897,13 @@ function setGhost() {
 function resize() {
   const w = app.clientWidth, h = app.clientHeight;
   renderer.setSize(w, h, false);
+  if (!composer) buildComposer();
+  composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(w, h);
+  inkPass.uniforms.uPx.value.set(1 / (w * renderer.getPixelRatio()), 1 / (h * renderer.getPixelRatio()));
   camera.aspect = w / h;
   camera.fov = w / h < 0.9 ? 52 : 32;
   camera.updateProjectionMatrix();
-  ui.classList.toggle('narrow', w < 700);
+  ui.classList.toggle('narrow', w < 700); ui.classList.toggle('medium', w >= 700 && w < 1100);
 }
 addEventListener('resize', resize);
 resize();
@@ -650,7 +948,7 @@ function frame(now) {
   }
   updateJacks();
   controls.update();
-  renderer.render(scene, camera);
+  composer.render();
   // панели читают те же величины, что двигают детали
   const p = state.p;
   const stage = STAGES.find(([a, b]) => p >= a && p < b);
@@ -659,6 +957,7 @@ function frame(now) {
   wg.textContent = String(['b1', 'b2', 'b3'].filter((id) => byName[id + 'U'].morph.morphTargetInfluences[0] > 0.97 && byName[id + 'L'].morph.morphTargetInfluences[0] > 0.97).length);
   const len = lerp(21, 31, sstep(0.36, 0.84, p));
   ln.textContent = len.toFixed(0) + ' м';
+  updatePanels(p, v);
   if (document.activeElement !== sl) sl.value = Math.round(p * 1000);
   const la = sstep(0.12, 0.17, p) * (1 - sstep(0.26, 0.32, p));
   const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
@@ -679,7 +978,7 @@ let filmT = 0;
 window.__film = (t) => {
   state.tour = false; state.target = null; ui.style.display = 'none'; controls.enabled = false;
   if (t < filmT) { state.S = 0; filmT = 0; }
-  while (filmT < t - 1e-9) { const dt = Math.min(1 / 60, t - filmT); state.p = filmP(filmT + dt); advance(dt); filmT += dt; }
+  while (filmT < t - 1e-9) { const dt = Math.min(1 / 60, t - filmT); state.p = filmP(filmT + dt); advance(dt); poseAll(state.p); filmT += dt; }
   state.p = filmP(t);
   const p = state.p, k = t / FILM.dur;
   const ang = lerp(0.62, 0.62 - 3.4, sstep(0, 1, k) * 0.9 + k * 0.1) ;
@@ -690,7 +989,7 @@ window.__film = (t) => {
   camera.position.set(tx + Math.cos(ang) * rad, hgt, Math.sin(-ang) * rad * 0.9 + 6 * (1 - Math.min(1, k * 2)));
   camera.lookAt(controls.target);
   poseAll(p); updateJacks();
-  renderer.render(scene, camera);
+  composer.render();
   return p;
 };
 window.__film.meta = FILM;
