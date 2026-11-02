@@ -10,7 +10,7 @@ html, body { margin: 0; height: 100%; background: #f1ede4; overflow: hidden; }
 .lbg-stage { text-align: right; }
 .lbg-stage b { display: block; font-size: 18px; font-weight: 700; }
 .lbg-stage em { font-style: normal; color: #651e32; font-weight: 800; font-size: 34px; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-.lbg-side { position: absolute; left: 24px; top: 88px; display: grid; gap: 10px; font-size: 12px; }
+.lbg-side { position: absolute; left: 24px; top: 100px; width: 230px; display: block; font-size: 12px; }
 .lbg-side span { display: block; color: rgba(43, 38, 34, 0.6); letter-spacing: 0.06em; text-transform: uppercase; font-size: 10px; }
 .lbg-side b { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .lbg-bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 24px 18px; display: grid; gap: 10px; background: linear-gradient(transparent, rgba(241, 237, 228, 0.92) 40%); }
@@ -36,3 +36,16 @@ html, body { margin: 0; height: 100%; background: #f1ede4; overflow: hidden; }
 .kv { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; } .kv span { color: rgba(43, 38, 34, 0.6); } .kv b { font-variant-numeric: tabular-nums; }
 #plan { width: 100%; height: auto; display: block; }
 .lbg-ui.narrow .lbg-panels, .lbg-ui.medium .lbg-panels { display: none; }
+
+.lbg-side .kv b { font-size: 12.5px; }
+#gantt { width: 100%; height: 70px; display: block; }
+.glabels { position: relative; height: 14px; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(43,38,34,0.6); font-weight: 700; margin: 0 24px; }
+.glabels span { position: absolute; top: 0; white-space: nowrap; }
+.lbg-bar { padding-top: 6px; }
+.lbg-bar #gantt, .lbg-bar .glabels { pointer-events: auto; }
+.lbg-ui.narrow #gantt, .lbg-ui.narrow .glabels, .lbg-ui.medium .glabels { display: none; }
+.lbg-ui.medium #gantt { height: 44px; }
+.lbg-ui.narrow .lbg-side { display: none; }
+
+.gwrap { position: relative; }
+.grow { position: absolute; left: 24px; font-size: 9px; line-height: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(43,38,34,0.7); font-weight: 600; pointer-events: none; }

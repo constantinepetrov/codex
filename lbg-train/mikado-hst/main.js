@@ -161,9 +161,9 @@ const mat = (c, o = {}) => { const m = new THREE.MeshStandardMaterial({color: c,
 // кузовная оболочка: ржавый чёрный металл с клёпкой превращается в белый лакированный кузов с вдавленными окнами.
 // Всё нарисовано в шейдере по координатам оболочки, поэтому едет и меняет форму вместе с ней.
 const LOWU = {value: 0};
-function shellMaterial(up, win, bands, dimA, dimB) {
+function shellMaterial(up, win, bands, dimA, dimB, glass = 0, led = 0) {
   const m = new THREE.MeshPhysicalMaterial({color: C.black, roughness: 0.6, metalness: 0.1, envMapIntensity: 0.7, clearcoat: 1, clearcoatRoughness: 0.2, side: THREE.DoubleSide});
-  const uni = {uM: {value: 0}, uUp: {value: up}, uWin: {value: win}, uBands: {value: bands}, uDimA: {value: new THREE.Vector2(...dimA)}, uDimB: {value: new THREE.Vector2(...dimB)}};
+  const uni = {uGlass: {value: glass}, uLed: {value: led}, uM: {value: 0}, uUp: {value: up}, uWin: {value: win}, uBands: {value: bands}, uDimA: {value: new THREE.Vector2(...dimA)}, uDimB: {value: new THREE.Vector2(...dimB)}};
   m.userData.uni = uni;
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uni); sh.uniforms.uLow = LOWU;
@@ -171,7 +171,7 @@ function shellMaterial(up, win, bands, dimA, dimB) {
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvP = uv;');
     sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
 varying vec2 vP;
-uniform float uM,uUp,uWin,uBands,uLow; uniform vec2 uDimA,uDimB;
+uniform float uM,uUp,uWin,uBands,uLow,uGlass,uLed; uniform vec2 uDimA,uDimB;
 float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
 float fbm(vec2 p){ return 0.5 * vn(p) + 0.25 * vn(p * 2.1) + 0.125 * vn(p * 4.3) + 0.0625 * vn(p * 8.7); }
@@ -213,22 +213,32 @@ vec3 perturbN(vec3 sp, vec3 sn, vec2 dH, float fd){
       float win = wv * wu * uWin * uUp;
       vec3 col = mix(body, vec3(0.130, 0.013, 0.032), stripe);
       col = mix(col, vec3(0.006, 0.012, 0.02), win);
-      col = col * (1.0 - 0.18 * seam) + vec3(0.025) * rivet;
+      col = col * (1.0 - 0.18 * seam);
+      // лобовое стекло: трапеция по верху носа, сужается к кончику
+      float gv = v - 0.5;
+      float ghw = mix(0.30, 0.07, smoothstep(0.12, 0.74, u));
+      float glassM = uGlass * smoothstep(0.10, 0.14, u) * (1.0 - smoothstep(0.70, 0.76, u)) * (1.0 - smoothstep(ghw - 0.012, ghw, abs(gv)));
+      col = mix(col, vec3(0.003, 0.007, 0.011), glassM);
+      float shl = min(v, 1.0 - v);
+      float ledM = uLed * step(0.64, u) * (1.0 - smoothstep(0.86, 0.92, u)) * (1.0 - smoothstep(0.0, 0.016, abs(shl - (0.075 + 0.07 * (u - 0.64) / 0.26))));
       diffuseColor.rgb = mix(loco, col, k);`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
-      roughnessFactor = mix(0.62, 0.30, k) * (0.8 + 0.5 * n) + 0.25 * bandH * (1.0 - k);`)
+      roughnessFactor = mix(0.62, 0.30, k) * (0.8 + 0.5 * n) + 0.25 * bandH * (1.0 - k);
+      roughnessFactor = mix(roughnessFactor, 0.06, glassM * k);`)
       .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
       metalnessFactor = mix(0.28, 0.04, k);`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
       {
         float hL = bandH * 1.2 - sU * 0.5 - sV * 0.5 + rivet * 0.9 + n * 0.25;
-        float hT = -win * 1.4 - (max(sU * step(0.5, fract(cu / 3.0)), sV) * 0.5) + rivet * 0.5 + stripe * 0.12 + n * 0.1;
+        float hT = -glassM * 0.7 - win * 1.4 - (max(sU * step(0.5, fract(cu / 3.0)), sV) * 0.5) + rivet * 0.5 + stripe * 0.12 + n * 0.1;
         float hh = mix(hL, hT, k);
         vec2 dH = vec2(dFdx(hh), dFdy(hh)) * 2.2;
         normal = perturbN(-vViewPosition, normal, dH, faceDirection);
       }`)
       .replace('#include <lights_physical_fragment>', `#include <lights_physical_fragment>
-      material.clearcoat = k * 0.7; material.clearcoatRoughness = 0.16;`);
+      material.clearcoat = k * (0.7 + 0.3 * glassM); material.clearcoatRoughness = 0.16;`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      totalEmissiveRadiance += vec3(1.0, 0.95, 0.85) * ledM * k * 3.0;`);
   };
   return m;
 }
@@ -245,11 +255,13 @@ function pointFn(P) {
     let w = P.w, h = P.h, yc = P.yc, x = P.x0 + u * P.L;
     if (P.nose) {
       const t = P.nose === 'front' ? u : 1 - u;
-      w *= Math.pow(Math.max(1 - Math.pow(t, 2.1), 0), 0.5);
-      h *= Math.pow(Math.max(1 - Math.pow(t, 1.55), 0), 0.5);
-      yc = P.yc - 0.62 * t * t;
+      w *= Math.pow(Math.max(1 - Math.pow(t, 1.7), 0), 0.5);
+      h *= Math.pow(Math.max(1 - Math.pow(t, 1.35), 0), 0.55);
+      yc = P.yc - 0.85 * Math.pow(t, 2.2);
+      P._t = t;
     }
-    const [z, y] = superSec(phi, w, h, P.n);
+    let [z, y] = superSec(phi, w, h, P.n);
+    if (P.nose && y > 0) z *= 1 - 0.3 * Math.pow(P._t, 1.2) * Math.min(1, y / (h / 2 + 1e-6)); // верх сужается: обтекаемый скос
     return [x, yc + y, z];
   };
 }
@@ -321,16 +333,17 @@ const SHELLS = [
   {id: 'b3', k: 4, label: 'Бак тендера', A: {x0: -11.6, L: 7.4, w: 2.6, h: 2.6, n: 2, yc: 2.0}, B: {...BODY, x0: -16.8, L: 5.0, nose: 'tail'}, win: 0, bands: 0},
 ];
 const SIDE = [1, -1, 1, -1, 1], ROLL = [1, -1, 1, -1, 1];
+const MD = [0.04, 0.14, 0.30, 0.16, 0.04]; // порядок старта модулей: носовые вперёд, хвостовые назад, середина последней
 SHELLS.forEach((S) => {
   const mod = {k: S.k, side: SIDE[S.k], dir: ROLL[S.k], ycA: S.A.yc, ycB: S.B.yc};
   for (const up of [1, 0]) {
     const {g, cA, cB} = shellGeo(S.A, S.B, !!up);
-    const m = new THREE.Mesh(g, shellMaterial(up, S.win, S.bands, [S.A.L, Math.PI * S.A.w / 2], [S.B.L, 5.2]));
+    const m = new THREE.Mesh(g, shellMaterial(up, S.win, S.bands, [S.A.L, Math.PI * S.A.w / 2], [S.B.L, 5.2], S.id === 'nose' && up ? 1 : 0, S.id === 'nose' && up ? 1 : 0));
     m.updateMorphTargets();
     const sd = SIDE[S.k];
     const pz = (w) => (up ? 1 : -1) * sd * w / 2;
     add(S.id + (up ? 'U' : 'L'), {
-      obj: m, A: pose(cA), B: pose(cB), d: 0.04 + 0.12 * S.k, arc: 0.3, label: S.label, morph: m, shell: true, mod,
+      obj: m, A: pose(cA), B: pose(cB), d: MD[S.k], arc: 0.3, label: S.label, morph: m, shell: true, mod,
       sh: {up, side: sd, pivA: new THREE.Vector3(0, S.A.yc - cA[1], pz(S.A.w)), pivB: new THREE.Vector3(0, S.B.yc - cB[1], pz(S.B.w * (S.B.nose ? 0.8 : 1)))},
     });
   }
@@ -343,7 +356,7 @@ SHELLS.forEach((S) => {
   for (const x of [-0.32, 0.32]) { const gr = cyl(0.85, 0.04, cm, 14); gr.position.x = x; core.add(gr); const h2 = cyl(0.5, 0.05, bm, 14); h2.position.x = x; core.add(h2); }
   core.add(at(box(0.5, 0.34, 0.5, hot), 0, 0.15, 0));
   const xcA = S.A.x0 + S.A.L / 2, xcB = S.B.x0 + S.B.L / 2;
-  add('core_' + S.id, {obj: core, A: pose([xcA, S.A.yc, 0], [0, 0, 0], [S.A.L * 0.9, S.A.w / 2 * 0.8, S.A.h / 2 * 0.8]), B: pose([xcB, 1.75, 0], [0, 0, 0], [S.B.L * 0.8, 1.0, 1.0]), d: 0.04 + 0.12 * S.k, arc: 0.3, label: 'Силовой блок', mod});
+  add('core_' + S.id, {obj: core, A: pose([xcA, S.A.yc, 0], [0, 0, 0], [S.A.L * 0.9, S.A.w / 2 * 0.8, S.A.h / 2 * 0.8]), B: pose([xcB, 1.75, 0], [0, 0, 0], [S.B.L * 0.8, 1.0, 1.0]), d: MD[S.k], arc: 0.3, label: 'Силовой блок', mod});
 });
 
 // 2. рама: три вложенных короба, выдвигаются телескопически
@@ -483,11 +496,11 @@ function ringGeo(ow, oh, iw, ih, depth) {
   return g;
 }
 const cabM = mat(C.black, {metalness: 0.4});
-add('cabFront', {obj: new THREE.Mesh(ringGeo(3.0, 2.8, 2.6, 2.5, 0.1), cabM), A: pose([0.8, 2.85, 0]), B: pose([-6.6, 2.4, 0]), d: 0.2, ex: [-0.8, 3.5, 3.4], tw: {axis: [0, 1, 0], ang: 1.2}, arc: 1.4, label: 'Стенка кабины', tint: [C.black, C.dark, cabM]});
+add('cabFront', {obj: new THREE.Mesh(ringGeo(3.0, 2.8, 2.6, 2.5, 0.1), cabM), A: pose([0.8, 2.85, 0]), B: pose([3.8, 2.4, 0]), d: 0.2, ex: [-0.8, 3.5, 3.4], tw: {axis: [0, 1, 0], ang: 1.2}, arc: 1.4, label: 'Стенка кабины', tint: [C.black, C.dark, cabM]});
 const cabM2 = mat(C.black, {metalness: 0.4});
-add('cabBack', {obj: new THREE.Mesh(ringGeo(3.0, 2.8, 2.6, 2.5, 0.1), cabM2), A: pose([-3.3, 2.85, 0]), B: pose([3.8, 2.4, 0]), d: 0.4, ex: [-1.5, 3.2, -3.4], tw: {axis: [0, 1, 0], ang: -1.2}, arc: 1.6, label: 'Задняя стенка', tint: [C.black, C.dark, cabM2]});
+add('cabBack', {obj: new THREE.Mesh(ringGeo(3.0, 2.8, 2.6, 2.5, 0.1), cabM2), A: pose([-3.3, 2.85, 0]), B: pose([-6.6, 2.4, 0]), d: 0.4, ex: [-1.5, 3.2, -3.4], tw: {axis: [0, 1, 0], ang: -1.2}, arc: 1.6, label: 'Задняя стенка', tint: [C.black, C.dark, cabM2]});
 const roofM = mat(C.black, {metalness: 0.4});
-add('cabRoof', {obj: grp(box(3.0, 0.1, 3.0, roofM)), A: pose([-1.9, 4.3, 0]), B: pose([11.45, 3.74, 0], [0, 0, -0.30], [0.72, 0.7, 0.6]), d: 0.45, ex: [-1.0, 6.0, 1.0], tw: {axis: [0, 0, 1], ang: 0.8}, flip: true, arc: 3.0, label: 'Крыша кабины', tint: [C.black, C.glass, roofM]});
+add('cabRoof', {obj: grp(box(3.0, 0.1, 3.0, roofM)), A: pose([-1.9, 4.3, 0]), B: pose([10.2, 3.9, 0], [0, 0, -0.18], [0.3, 0.45, 0.42]), d: 0.45, ex: [-1.0, 6.0, 1.0], tw: {axis: [0, 0, 1], ang: 0.8}, flip: true, arc: 3.0, label: 'Крыша кабины', tint: [C.black, C.glass, roofM]});
 for (const s of [1, -1]) {
   const m = mat(C.black, {metalness: 0.4});
   add('cabW' + (s > 0 ? 'L' : 'R'), {obj: grp(new THREE.Mesh(wallGeo(2.9, 2.4, 0.08), m)), A: pose([-1.9, 3.05, s * 1.45]), B: pose([5.4, 1.9, s * 1.56], [0, 0, 0], [0.38, 0.88, 1]), d: 0.3, ex: [-1.5, 1.4, s * 3.6], tw: {axis: [1, 0, 0], ang: s * 1.4}, arc: 1.5, label: 'Стенка кабины', tint: [C.black, C.burg, m]});
@@ -551,7 +564,8 @@ for (const sd of ['L', 'R']) {
 byName.cabRoof.hg = {axis: [0, 0, 1], piv: [-1.5, 0, 0], ang: 0.9};
 byName.chim.hg = {axis: [0, 0, 1], piv: [0, -0.5, 0], ang: -1.4};
 byName.pilot.hg = {axis: [0, 0, 1], piv: [-0.5, -0.4, 0], ang: -0.7};
-byName.door.hg = {axis: [0, 1, 0], piv: [0, 0, 1.0], ang: 1.3};
+byName.door.hg = {axis: [0, 1, 0], piv: [0, 0, 1.0], ang: -1.3};
+byName.door.d = 0; byName.pilot.d = 0;
 
 
 // ---------- детализация (подменяем простые формы на модели с профилем) ----------
@@ -661,13 +675,13 @@ class Swarm {
 const swarms = [];
 const _sm = new THREE.Matrix4(), _spp = new THREE.Vector3(), _sqq = new THREE.Quaternion(), _sss = new THREE.Vector3();
 function swarmUpdate(S, p) {
-  const d = 0.04 + 0.12 * S.mod.k;
+  const d = MD[S.mod.k];
   const w = backOut(sstep(0.30 + 0.05 * d, 0.70 + 0.05 * d, p), 0.7), m = sstep(0.34 + 0.05 * d, 0.84 + 0.05 * d, p), roll = sstep(0.28 + 0.05 * d, 0.60 + 0.05 * d, p);
   const ay = lerp(S.mod.ycA, S.mod.ycB, m), phi = S.mod.dir * 2 * PI * roll, cs = Math.cos(phi), sn = Math.sin(phi);
   const rq = new THREE.Quaternion().setFromAxisAngle(X_AXIS, phi);
   S.items.forEach((it, i) => {
     _spp.copy(it.a).lerp(it.b, w); _sqq.copy(it.qa).slerp(it.qb, w); _sss.copy(it.sa).lerp(it.sb, w);
-    const ry = _spp.y - ay, rz = _spp.z; _spp.y = ay + ry * cs - rz * sn; _spp.z = ry * sn + rz * cs; _sqq.premultiply(rq);
+    const ry = _spp.y - ay, rz = _spp.z; _spp.y = ay + ry * cs - rz * sn + LIFT * Math.sin(PI * sstep(0.26 + 0.05 * d, 0.76 + 0.05 * d, p)); _spp.z = ry * sn + rz * cs; _sqq.premultiply(rq);
     S.mesh.setMatrixAt(i, _sm.compose(_spp, _sqq, _sss));
   });
   S.mesh.instanceMatrix.needsUpdate = true;
@@ -748,6 +762,7 @@ function hingeAbout(P, axis, pivL, th) {
   _q1.copy(_qn);
 }
 const _ax = new THREE.Vector3(), _pl = new THREE.Vector3();
+const LIFT = 1.5; // модуль приподнимается на время переворота, чтобы не задеть колёса и тележки
 function poseAll(p) {
   parts.forEach((P, i) => {
     const d = P.d;
@@ -764,7 +779,7 @@ function poseAll(p) {
     // створка оболочки раскрывается на шве, как раковина
     if (P.sh) {
       _pl.copy(P.sh.pivA).lerp(P.sh.pivB, m);
-      hingeAbout(P, X_AXIS, _pl, P.sh.side * (P.sh.up ? 1.75 : 0.6) * op);
+      hingeAbout(P, X_AXIS, _pl, P.sh.side * (P.sh.up ? 1.75 : 0.25) * op);
     } else if (P.hg) {
       _ax.set(...P.hg.axis); _pl.set(...P.hg.piv);
       hingeAbout(P, _ax, _pl, P.hg.ang * op);
@@ -773,7 +788,7 @@ function poseAll(p) {
     if (P.mod) {
       const ay = lerp(P.mod.ycA, P.mod.ycB, m), phi = P.mod.dir * 2 * PI * roll;
       const ry = P.root.position.y - ay, rz = P.root.position.z, cs = Math.cos(phi), sn = Math.sin(phi);
-      P.root.position.y = ay + ry * cs - rz * sn; P.root.position.z = ry * sn + rz * cs;
+      P.root.position.y = ay + ry * cs - rz * sn + LIFT * Math.sin(PI * sstep(0.26 + 0.05 * d, 0.76 + 0.05 * d, p)); P.root.position.z = ry * sn + rz * cs;
       _q2.setFromAxisAngle(X_AXIS, phi); _q1.premultiply(_q2);
     }
     // посадка: затухающая дрожь на месте
@@ -795,6 +810,50 @@ function poseAll(p) {
   });
   swarms.forEach((S) => swarmUpdate(S, p));
 }
+
+// ---------- поиск столкновений: точки на поверхностях деталей, ячейки 0,3 м ----------
+const catOf = (n) => /^(nose|b1|b2|b3|tail)[UL]$/.test(n) ? 'shell:' + n.replace(/[UL]$/, '') : /^core_/.test(n) ? 'core:' + n.slice(5) : /^ax_/.test(n) ? 'wheel' : /^bg_/.test(n) ? 'bogie' : /^sp[ABC][LR]$/.test(n) ? 'spine' : /^(side|main|cross|pist|ecc|rad|cmb|cyl)[LR]$/.test(n) ? 'rod' : /^(cab|run|tpl|pilot|door)/.test(n) ? 'panel' : 'small';
+const samples = new Map();
+function samplePts(P) {
+  if (samples.has(P)) return samples.get(P);
+  const list = [];
+  P.root.traverse((o) => { if (o.isMesh && o.geometry.attributes.position) { const pos = o.geometry.attributes.position, n = pos.count, step = Math.max(1, Math.floor(n / 70)); const idx = []; for (let i = 0; i < n; i += step) idx.push(i); list.push({o, idx}); } });
+  samples.set(P, list);
+  return list;
+}
+const _cv = new THREE.Vector3();
+window.__collide = (p, cell = 0.3) => {
+  poseAll(p);
+  const grid = new Map();
+  parts.forEach((P, i) => {
+    P.root.updateMatrixWorld(true);
+    for (const {o, idx} of samplePts(P)) {
+      const pos = o.geometry.attributes.position, mp = o.geometry.morphAttributes.position?.[0], inf = o.morphTargetInfluences?.[0] || 0;
+      for (const j of idx) {
+        _cv.fromBufferAttribute(pos, j);
+        if (mp && inf) { _cv.multiplyScalar(1 - inf).x += mp.getX(j) * inf; _cv.y += mp.getY(j) * inf; _cv.z += mp.getZ(j) * inf; }
+        _cv.applyMatrix4(o.matrixWorld);
+        const key = Math.floor(_cv.x / cell) + ',' + Math.floor(_cv.y / cell) + ',' + Math.floor(_cv.z / cell);
+        let set = grid.get(key); if (!set) grid.set(key, set = new Set()); set.add(i);
+      }
+    }
+  });
+  const pairs = {};
+  for (const set of grid.values()) {
+    if (set.size < 2) continue;
+    const a = [...set];
+    for (let x = 0; x < a.length; x++) for (let y = x + 1; y < a.length; y++) {
+      const A = parts[a[x]], B = parts[a[y]], ca = catOf(A.name), cb = catOf(B.name);
+      const bad = (ca.startsWith('shell') && cb.startsWith('shell') && ca !== cb) || (ca.startsWith('shell') && cb.startsWith('core') && ca.split(':')[1] !== cb.split(':')[1]) || (cb.startsWith('shell') && ca.startsWith('core') && ca.split(':')[1] !== cb.split(':')[1]) ||
+        ((ca.startsWith('shell') || ca.startsWith('core')) && (cb === 'wheel' || cb === 'bogie' || cb === 'panel')) || ((cb.startsWith('shell') || cb.startsWith('core')) && (ca === 'wheel' || ca === 'bogie' || ca === 'panel')) ||
+        (ca === 'panel' && cb === 'panel') || (ca === 'wheel' && cb === 'wheel');
+      if (!bad) continue;
+      const k = A.name < B.name ? A.name + '|' + B.name : B.name + '|' + A.name;
+      pairs[k] = (pairs[k] || 0) + 1;
+    }
+  }
+  return pairs;
+};
 
 // ---------- ход, колёса ----------
 const state = {p: 0, target: null, tspeed: 0.05, S: 0, tour: true, idleT: 0, ghost: false, tourT: 0};
@@ -819,8 +878,17 @@ ui.className = 'lbg-ui';
 ui.innerHTML = `
 <div class="lbg-top"><div class="lbg-title"><i></i>LBG<span>Мы не читаем лекций. Мы тренируем на конкретный результат.</span></div>
 <div class="lbg-stage"><b id="st">Паровоз</b><em id="pc">0%</em></div></div>
-<div class="lbg-side"><div><span>Скорость</span><b id="sp">0 км/ч</b></div><div><span>Колёсных пар</span><b>12</b></div><div><span>Вагонов</span><b id="wg">0</b></div><div><span>Длина</span><b id="ln">21 м</b></div></div>
+<div class="lbg-side pn"><h4>Машина</h4>
+ <div class="kv"><span>Класс</span><b id="cl">Паровоз 2-8-2</b></div>
+ <div class="kv"><span>Скорость</span><b id="sp">0 км/ч</b></div>
+ <div class="kv"><span>Колёсных пар</span><b>12</b></div>
+ <div class="kv"><span>Вагонов</span><b id="wg">0</b></div>
+ <div class="kv"><span>Длина</span><b id="ln">21 м</b></div>
+ <div class="kv"><span>Модулей раскрыто</span><b id="op">0 из 5</b></div>
+ <div class="kv"><span>Рама</span><b id="fr">сомкнута</b></div>
+</div>
 <div class="lbg-bar">
+ <svg id="gantt" viewBox="0 0 1000 96" preserveAspectRatio="none"></svg>
  <div class="lbg-btns"><button data-a="loco">Паровоз</button><button data-a="split">Раскрыть</button><button data-a="build">Собрать в скоростной</button><button data-a="go">Поехали</button></div>
  <input id="sl" type="range" min="0" max="1000" value="0">
  <div class="lbg-btns"><button data-v="q">3/4</button><button data-v="s">Сбоку</button><button data-v="f">Спереди</button><button data-v="t">Сверху</button><button data-a="ghost">Прозрачный корпус</button></div>
@@ -855,9 +923,9 @@ const wd = ui.querySelector('#wd'), wr = ui.querySelector('#wr'), rodsEl = ui.qu
 const f1 = (x) => x.toFixed(2).replace('.', ',');
 function updatePanels(p, v) {
   MODNAMES.forEach(([id], i) => {
-    const d = 0.04 + 0.12 * i, op = sstep(0.08 + 0.06 * d, 0.26 + 0.06 * d, p) * (1 - sstep(0.62 + 0.05 * d, 0.80 + 0.05 * d, p));
+    const d = MD[i], op = sstep(0.08 + 0.06 * d, 0.26 + 0.06 * d, p) * (1 - sstep(0.62 + 0.05 * d, 0.80 + 0.05 * d, p));
     const w0 = sstep(0.30 + 0.05 * d, 0.70 + 0.05 * d, p), m = sstep(0.34 + 0.05 * d, 0.84 + 0.05 * d, p);
-    const st = p < 0.07 ? 'паровоз' : op > 0.8 ? 'раскрыт' : w0 > 0 && w0 < 1 ? 'едет' : (p > 0.78 + 0.08 * d && p < 0.94) ? 'замок' : w0 >= 1 ? 'вагон' : 'раскрытие';
+    const st = p < 0.07 ? 'паровоз' : (op > 0.6 && w0 > 0.03 && w0 < 0.97) ? 'раскрыт, едет' : op > 0.8 ? 'раскрыт' : w0 > 0 && w0 < 1 ? 'едет' : (p > 0.78 + 0.08 * d && p < 0.94) ? 'замок' : w0 >= 1 ? 'вагон' : 'раскрытие';
     modRows[i].ms.textContent = st;
     modRows[i].bar.style.width = Math.round((w0 * 0.6 + m * 0.4) * 100) + '%';
     const P = byName[id + 'L'], L = lerp(MODS_L[id][0], MODS_L[id][1], m);
@@ -871,6 +939,39 @@ function updatePanels(p, v) {
   rodsEl.textContent = p < 0.1 ? 'на колёсах' : p < 0.7 ? 'сняты' : 'тяги тележек';
 }
 const MODS_L = {nose: [1.55, 5.0], b1: [4.25, 5.2], b2: [3.4, 10.0], tail: [3.8, 5.0], b3: [7.4, 5.0]};
+
+
+// ---------- хронология: когда каждый модуль раскрывается, едет и защёлкивается ----------
+const gantt = ui.querySelector('#gantt');
+const GROW = [['Нос', 0], ['Вагон 1', 1], ['Вагон 2', 2], ['Вагон 3', 3], ['Хвост', 4]];
+let gcursor;
+{
+  const mk = (t, at) => { const e = document.createElementNS(NS, t); for (const k in at) e.setAttribute(k, at[k]); gantt.appendChild(e); return e; };
+  [[0.07, 'Паровоз'], [0.30, 'Раскрытие'], [0.72, 'Превращение'], [0.94, 'Замки']].forEach(([x, lab]) => { mk('line', {x1: x * 1000, x2: x * 1000, y1: 0, y2: 96, stroke: 'rgba(43,38,34,0.25)', 'stroke-dasharray': '3 3', 'vector-effect': 'non-scaling-stroke'}); });
+  GROW.forEach(([lab, k], i) => {
+    const d = MD[k], y = 20 + i * 15;
+    mk('rect', {x: 0, y, width: 1000, height: 11, fill: 'rgba(43,38,34,0.05)'});
+    mk('rect', {x: (0.08 + 0.06 * d) * 1000, y, width: 0.18 * 1000, height: 11, fill: '#b9899a'});            // раскрытие
+    mk('rect', {x: (0.30 + 0.05 * d) * 1000, y, width: 0.40 * 1000, height: 11, fill: '#651e32'});           // ход и превращение
+    mk('rect', {x: (0.62 + 0.05 * d) * 1000, y, width: 0.18 * 1000, height: 11, fill: '#2b2622', opacity: 0.8}); // замок
+  });
+  gcursor = mk('line', {x1: 0, x2: 0, y1: 0, y2: 96, stroke: '#2b2622', 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke'});
+  gantt.addEventListener('pointerdown', (e) => { const r = gantt.getBoundingClientRect(); userTouch(); state.target = null; state.p = clamp((e.clientX - r.left) / r.width); });
+}
+const ganttLabels = document.createElement('div'); ganttLabels.className = 'glabels';
+ganttLabels.innerHTML = ['Паровоз', 'Раскрытие', 'Превращение', 'Замки', 'Скоростной состав'].map((t, i) => `<span style="left:${[0, 0.07, 0.30, 0.72, 0.94][i] * 100}%;${i === 4 ? 'transform:translateX(-100%);margin-left:-0.5%;' : ''}">${t}</span>`).join('');
+const gwrap = document.createElement('div'); gwrap.className = 'gwrap';
+ui.querySelector('.lbg-bar').insertBefore(ganttLabels, gantt);
+gantt.parentNode.insertBefore(gwrap, gantt); gwrap.appendChild(gantt);
+GROW.forEach(([lab], i) => { const e = document.createElement('span'); e.className = 'grow'; e.textContent = lab; e.style.top = (14.6 + i * 10.9) + 'px'; gwrap.appendChild(e); });
+const opEl = ui.querySelector('#op'), frEl = ui.querySelector('#fr'), clEl = ui.querySelector('#cl');
+function updateSpec(p) {
+  let n = 0; MD.forEach((d) => { const o = sstep(0.08 + 0.06 * d, 0.26 + 0.06 * d, p) * (1 - sstep(0.62 + 0.05 * d, 0.80 + 0.05 * d, p)); if (o > 0.5) n++; });
+  opEl.textContent = n + ' из 5';
+  frEl.textContent = p < 0.3 ? 'сомкнута' : p < 0.84 ? 'выдвигается' : 'выдвинута';
+  clEl.textContent = p < 0.3 ? 'Паровоз 2-8-2' : p < 0.94 ? 'Превращение' : 'Скоростной состав';
+  gcursor.setAttribute('x1', p * 1000); gcursor.setAttribute('x2', p * 1000);
+}
 
 function setView(k) {
   const V = {q: [24, 9, 26], s: [-2, 4, 52], f: [52, 5, 0.01], t: [-2, 56, 2]}[k];
@@ -901,6 +1002,7 @@ function resize() {
   composer.setPixelRatio(renderer.getPixelRatio()); composer.setSize(w, h);
   inkPass.uniforms.uPx.value.set(1 / (w * renderer.getPixelRatio()), 1 / (h * renderer.getPixelRatio()));
   camera.aspect = w / h;
+  if (w >= 1100) camera.setViewOffset(w, h, 170, 0, w, h); else camera.clearViewOffset();
   camera.fov = w / h < 0.9 ? 52 : 32;
   camera.updateProjectionMatrix();
   ui.classList.toggle('narrow', w < 700); ui.classList.toggle('medium', w >= 700 && w < 1100);
@@ -957,7 +1059,7 @@ function frame(now) {
   wg.textContent = String(['b1', 'b2', 'b3'].filter((id) => byName[id + 'U'].morph.morphTargetInfluences[0] > 0.97 && byName[id + 'L'].morph.morphTargetInfluences[0] > 0.97).length);
   const len = lerp(21, 31, sstep(0.36, 0.84, p));
   ln.textContent = len.toFixed(0) + ' м';
-  updatePanels(p, v);
+  updatePanels(p, v); updateSpec(p);
   if (document.activeElement !== sl) sl.value = Math.round(p * 1000);
   const la = sstep(0.12, 0.17, p) * (1 - sstep(0.26, 0.32, p));
   const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
