@@ -334,7 +334,8 @@ const SHELLS = [
 ];
 const SIDE = [1, -1, 1, -1, 1], ROLL = [1, -1, 1, -1, 1];
 const MODOBJ = {};
-const MD = [0.04, 0.14, 0.30, 0.16, 0.04]; // порядок старта модулей: носовые вперёд, хвостовые назад, середина последней
+const MD = [0.02, 0.18, 0.38, 0.26, 0.02];
+const OVER = [1.0, 1.4, 0.7, 1.2, 1.7]; // перелёт по модулям: тяжёлый бак оседает сильнее, топка мягче // порядок старта модулей: носовые вперёд, хвостовые назад, середина последней
 SHELLS.forEach((S) => {
   const mod = {k: S.k, side: SIDE[S.k], dir: ROLL[S.k], ycA: S.A.yc, ycB: S.B.yc};
   MODOBJ[S.id] = mod;
@@ -807,7 +808,7 @@ function tint(P, m) {
   mt.color.setHex(a).lerp(new THREE.Color(b), m);
 }
 const backOut = (t, k = 1.5) => { const x = t - 1; return 1 + (k + 1) * x * x * x + k * x * x; };
-const X_AXIS = new THREE.Vector3(1, 0, 0), _pv = new THREE.Vector3(), _pv2 = new THREE.Vector3(), _qn = new THREE.Quaternion();
+const Z_AXIS = new THREE.Vector3(0, 0, 1), Y_AXIS = new THREE.Vector3(0, 1, 0), X_AXIS = new THREE.Vector3(1, 0, 0), _pv = new THREE.Vector3(), _pv2 = new THREE.Vector3(), _qn = new THREE.Quaternion();
 // поворот детали вокруг шарнира, заданного точкой pivL в её собственных координатах
 function hingeAbout(P, axis, pivL, th) {
   _q2.setFromAxisAngle(axis, th);
@@ -822,7 +823,7 @@ function poseAll(p) {
     const d = P.d;
     const op = sstep(0.08 + 0.06 * d, 0.26 + 0.06 * d, p) * (1 - sstep(0.62 + 0.05 * d, 0.80 + 0.05 * d, p)); // створки открыты
     const w0 = sstep(0.30 + 0.05 * d, 0.70 + 0.05 * d, p);
-    const w = backOut(w0, P.shell ? 0.7 : 1.2);                                  // скольжение с перелётом
+    const w = backOut(w0, P.mod ? OVER[P.mod.k] : (P.shell ? 0.7 : 1.2));      // скольжение с перелётом, у каждого модуля свой
     const m = sstep(0.34 + 0.05 * d, 0.84 + 0.05 * d, p);
     const roll = sstep(0.28 + 0.05 * d, 0.60 + 0.05 * d, p);
     const A = P.Afn ? P.Afn() : P.A;
@@ -830,10 +831,14 @@ function poseAll(p) {
     P.root.position.y += P.arc * Math.sin(PI * w0);
     _q1.copy(A.q).slerp(P.B.q, w);
     P.root.scale.copy(A.s).lerp(P.B.s, w);
-    // створка оболочки раскрывается на шве, как раковина
+    // замах: перед стартом модуль приседает, потом пружинит вверх
+    if (P.mod) P.root.position.y -= 0.32 * Math.sin(PI * clamp((p - (0.245 + 0.05 * d)) / 0.075));
+    // створка оболочки раскрывается на шве, как раковина; дрожит на пике и после защёлки
     if (P.sh) {
       _pl.copy(P.sh.pivA).lerp(P.sh.pivB, m);
-      hingeAbout(P, X_AXIS, _pl, P.sh.side * (P.sh.up ? 1.75 : 0.25) * op);
+      const dtc = p - (0.80 + 0.05 * d);
+      const flut = 0.05 * op * Math.sin(p * 55 + d * 9) + (dtc > 0 ? 0.11 * Math.exp(-26 * dtc) * Math.sin(95 * dtc) : 0);
+      hingeAbout(P, X_AXIS, _pl, P.sh.side * ((P.sh.up ? 1.75 : 0.25) * op + (P.sh.up ? 1 : 0.4) * flut));
     } else if (P.hg) {
       _ax.set(...P.hg.axis); _pl.set(...P.hg.piv);
       hingeAbout(P, _ax, _pl, P.hg.ang * op);
@@ -844,11 +849,16 @@ function poseAll(p) {
       const ry = P.root.position.y - ay, rz = P.root.position.z, cs = Math.cos(phi), sn = Math.sin(phi);
       P.root.position.y = ay + ry * cs - rz * sn + LIFT * Math.sin(PI * sstep(0.26 + 0.05 * d, 0.76 + 0.05 * d, p)); P.root.position.z = ry * sn + rz * cs;
       _q2.setFromAxisAngle(X_AXIS, phi); _q1.premultiply(_q2);
+      // покачивание корпуса в воздухе на время переворота
+      _q2.setFromAxisAngle(Z_AXIS, 0.1 * P.mod.dir * Math.sin(2 * PI * roll) * Math.sin(PI * clamp(roll))); _q1.premultiply(_q2);
+      _q2.setFromAxisAngle(Y_AXIS, 0.06 * Math.sin(3 * PI * roll) * Math.sin(PI * clamp(roll))); _q1.premultiply(_q2);
     }
     // посадка: затухающая дрожь на месте
     const pl = 0.78 + 0.08 * d, dtl = p - pl;
-    if (dtl > 0) P.root.position.y += 0.04 * Math.exp(-26 * dtl) * Math.sin(95 * dtl + i);
+    let sq = 0;
+    if (dtl > 0) { P.root.position.y += 0.04 * Math.exp(-26 * dtl) * Math.sin(95 * dtl + i); if (P.mod) sq = 0.035 * Math.exp(-20 * dtl) * Math.sin(80 * dtl); }
     P.root.quaternion.copy(_q1);
+    if (sq) { P.root.scale.y *= 1 - sq; P.root.scale.z *= 1 - sq; P.root.scale.x *= 1 + sq * 0.6; }
     if (P.morph) {
       P.morph.morphTargetInfluences[0] = m;
       P.morph.material.userData.uni.uM.value = m;
@@ -920,7 +930,7 @@ emitter({name: 'chim', N: 220, life: 3.6, speed: 3.2, dir: [-0.28, 1, 0], size: 
 for (const sd of [1, -1]) emitter({name: 'cock' + sd, N: 60, life: 0.9, speed: 4.5, dir: [0.35, -0.55, sd * 1], size: [0.15, 0.8], spread: 0.35, pos: (o) => byName['cyl' + (sd > 0 ? 'L' : 'R')].root.localToWorld(o.set(0.45, -0.28, 0)), str: (p, T) => (1 - sstep(0.04, 0.10, p)) * (((T % 1.7) < 0.55) ? 1 : 0)});
 ['nose', 'b1', 'b2', 'tail', 'b3'].forEach((id, k) => emitter({name: 'vent' + id, N: 100, life: 2.6, speed: 2.4, dir: [0, 1, SIDE[k] * 0.35], size: [0.5, 2.2], spread: 0.5, wide: [id, k],
   pos: (o, i) => { const P = byName[id + 'L']; o.copy(P.root.position); o.x += (seedR(i, 3) - 0.5) * 3.0; o.y += 0.7; return o; },
-  str: (p, T) => { const d = MD[k]; return sstep(0.08 + 0.06 * d, 0.26 + 0.06 * d, p) * (1 - sstep(0.62 + 0.05 * d, 0.80 + 0.05 * d, p)) * (0.6 + 0.4 * Math.sin(T * 5 + k)); }}));
+  str: (p, T) => { const d = MD[k], dtc = p - (0.80 + 0.05 * d); return sstep(0.08 + 0.06 * d, 0.26 + 0.06 * d, p) * (1 - sstep(0.62 + 0.05 * d, 0.80 + 0.05 * d, p)) * (0.6 + 0.4 * Math.sin(T * 5 + k)) + (dtc > 0 ? 1.1 * Math.exp(-11 * dtc) : 0); }}));
 const STEAM_N = steamEm.reduce((a, e) => a + e.N, 0);
 const sPos = new Float32Array(STEAM_N * 3), sA = new Float32Array(STEAM_N), sS = new Float32Array(STEAM_N);
 const sGeo = new THREE.BufferGeometry();
@@ -1005,7 +1015,14 @@ app.appendChild(ui);
 const st = ui.querySelector('#st'), pc = ui.querySelector('#pc'), sp = ui.querySelector('#sp'), sl = ui.querySelector('#sl'), wg = ui.querySelector('#wg'), ln = ui.querySelector('#ln'), lbBox = ui.querySelector('#lb');
 const STAGES = [[0, 0.07, 'Паровоз Mikado 2-8-2'], [0.07, 0.30, 'Раскрытие'], [0.30, 0.72, 'Превращение'], [0.72, 0.94, 'Замки'], [0.94, 1.01, 'Скоростной состав']];
 const LABELS = ['noseU', 'b1U', 'b2U', 'b3U', 'tailU', 'core_b1', 'core_b2', 'spAL', 'chim', 'cabRoof', 'coal', 'pilot'];
-const labelEls = LABELS.map((id) => { const e = document.createElement('div'); e.className = 'lb'; e.textContent = byName[id].label; lbBox.appendChild(e); return {id, e}; });
+const SVGNS = 'http://www.w3.org/2000/svg';
+const leadSvg = document.createElementNS(SVGNS, 'svg'); leadSvg.setAttribute('class', 'leads'); lbBox.appendChild(leadSvg);
+const labelEls = LABELS.map((id) => {
+  const e = document.createElement('div'); e.className = 'lb'; e.textContent = byName[id].label; lbBox.appendChild(e);
+  const ln = document.createElementNS(SVGNS, 'line'); ln.setAttribute('stroke', '#651e32'); ln.setAttribute('stroke-width', '1'); leadSvg.appendChild(ln);
+  const dt = document.createElementNS(SVGNS, 'circle'); dt.setAttribute('r', '2.5'); dt.setAttribute('fill', '#651e32'); leadSvg.appendChild(dt);
+  return {id, e, ln, dt};
+});
 
 
 // ---------- панели: состояние модулей, план по рельсу, колесо ----------
@@ -1015,7 +1032,7 @@ const modRows = MODNAMES.map(([id, a, b]) => {
   const r = document.createElement('div'); r.className = 'mrow';
   r.innerHTML = `<span class="mn">${a} <i>›</i> ${b}</span><span class="ms"></span><span class="mb"><i></i></span>`;
   modsBox.appendChild(r);
-  return {id, ms: r.querySelector('.ms'), bar: r.querySelector('.mb i')};
+  return {id, row: r, ms: r.querySelector('.ms'), bar: r.querySelector('.mb i')};
 });
 const NS = 'http://www.w3.org/2000/svg';
 const planX = (x) => (x + 20) / 38 * 280;
@@ -1074,6 +1091,25 @@ function updateSpec(p) {
   clEl.textContent = p < 0.3 ? 'Паровоз 2-8-2' : p < 0.94 ? 'Превращение' : 'Скоростной состав';
   gcursor.setAttribute('x1', p * 1000); gcursor.setAttribute('x2', p * 1000);
 }
+
+
+// ---------- изоляция: щелчок по модулю в списке гасит остальные ----------
+const ISO = {id: null};
+const MOD_IDS = ['nose', 'b1', 'b2', 'tail', 'b3'];
+function matsOf(root) { const out = []; root.traverse((o) => { if (o.isMesh && o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => out.push(m)); }); return out; }
+function setIsolate(id) {
+  ISO.id = ISO.id === id ? null : id;
+  const apply = (mats, op) => mats.forEach((m) => {
+    if (m.userData.o0 === undefined) { m.userData.o0 = m.opacity; m.userData.t0 = m.transparent; m.userData.d0 = m.depthWrite; }
+    const on = ISO.id !== null && op < 1;
+    m.transparent = on || m.userData.t0; m.opacity = on ? op : m.userData.o0; m.depthWrite = on ? false : m.userData.d0; m.needsUpdate = true;
+  });
+  parts.forEach((P) => { const mid = P.mod ? MOD_IDS[P.mod.k] : null; apply(matsOf(P.root), ISO.id === null ? 1 : mid === ISO.id ? 1 : mid ? 0.08 : 0.28); });
+  swarms.forEach((S) => apply([S.mesh.material], ISO.id === null ? 1 : MOD_IDS[S.mod.k] === ISO.id ? 1 : 0.08));
+  modRows.forEach((r) => r.row.classList.toggle('sel', ISO.id === r.id));
+  userTouch();
+}
+modRows.forEach((r) => { r.row.addEventListener('click', () => setIsolate(r.id)); r.row.title = 'Показать только этот модуль'; });
 
 function setView(k) {
   const V = {q: [24, 9, 26], s: [-2, 4, 52], f: [52, 5, 0.01], t: [-2, 56, 2]}[k];
@@ -1168,12 +1204,17 @@ function frame(now) {
   if (document.activeElement !== sl) sl.value = Math.round(p * 1000);
   const la = sstep(0.12, 0.17, p) * (1 - sstep(0.26, 0.32, p));
   const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
-  for (const {id, e} of labelEls) {
-    const P = byName[id];
-    proj.copy(P.root.position).project(camera);
-    e.style.opacity = proj.z < 1 ? la : 0;
-    e.style.transform = `translate(${(proj.x * 0.5 + 0.5) * w + 8}px, ${(-proj.y * 0.5 + 0.5) * h - 8}px)`;
-  }
+  // подписи: якорь в детали, выноска вверх и вправо; налезающие друг на друга раздвигаются по вертикали
+  const L = labelEls.map((it, i) => { proj.copy(byName[it.id].root.position).project(camera); return {it, i, ax: (proj.x * 0.5 + 0.5) * w, ay: (-proj.y * 0.5 + 0.5) * h, vis: proj.z < 1 ? la : 0}; });
+  L.forEach((q) => { q.x = q.ax + 44 + (q.i % 3) * 18; q.y = q.ay - 36 - (q.i % 2) * 14; });
+  L.slice().sort((a, b) => a.y - b.y).forEach((q, k, arr) => { for (let j = 0; j < k; j++) { const o = arr[j]; if (Math.abs(q.x - o.x) < 150 && Math.abs(q.y - o.y) < 25) q.y = o.y + 25; } });
+  L.forEach((q) => {
+    const {e, ln, dt} = q.it;
+    e.style.opacity = q.vis; ln.style.opacity = q.vis; dt.style.opacity = q.vis;
+    e.style.transform = `translate(${q.x}px, ${q.y - 9}px)`;
+    ln.setAttribute('x1', q.ax); ln.setAttribute('y1', q.ay); ln.setAttribute('x2', q.x); ln.setAttribute('y2', q.y);
+    dt.setAttribute('cx', q.ax); dt.setAttribute('cy', q.ay);
+  });
   requestAnimationFrame(frame);
 }
 
