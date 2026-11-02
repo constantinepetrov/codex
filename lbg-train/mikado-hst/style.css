@@ -52,3 +52,5 @@ html, body { margin: 0; height: 100%; background: #f1ede4; overflow: hidden; }
 
 .leads { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .mrow { cursor: pointer; } .mrow:hover .mn { color: #651e32; } .mrow.sel .mn { color: #651e32; } .mrow.sel { background: rgba(101,30,50,0.08); }
+
+.lbg-ui.clean .lbg-side, .lbg-ui.clean .lbg-panels, .lbg-ui.clean .gwrap, .lbg-ui.clean .glabels { display: none; }
