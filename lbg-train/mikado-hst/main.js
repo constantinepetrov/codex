@@ -302,7 +302,8 @@ function shellGeo(PA, PB, phi0, phi1, edgePhi) {
   g.morphAttributes.normal = [gb.attributes.normal];
   // точка шарнира на кромке панели в её собственных координатах
   const eA = fa(0.5, edgePhi), eB = fb(0.5, edgePhi);
-  return {g, cA, cB, pivA: new THREE.Vector3(0, eA[1] - cA[1], eA[2] - cA[2]), pivB: new THREE.Vector3(0, eB[1] - cB[1], eB[2] - cB[2])};
+  const kn = [0.08, 0.36, 0.64, 0.92].map((u) => ({a: new THREE.Vector3(...fa(u, edgePhi)), b: new THREE.Vector3(...fb(u, edgePhi))}));
+  return {g, cA, cB, kn, pivA: new THREE.Vector3(0, eA[1] - cA[1], eA[2] - cA[2]), pivB: new THREE.Vector3(0, eB[1] - cB[1], eB[2] - cB[2])};
 }
 
 // ---------- детали и позы ----------
@@ -354,6 +355,7 @@ const TPL = [
   {nm: 'U', a: 50, b: 130, e: 130, open: -1.25, od: 0.08}, {nm: 'L', a: 180, b: 270, e: 180, open: 0.65, od: 0.12}, {nm: 'L2', a: 270, b: 360, e: 360, open: -0.65, od: 0.16},
 ];
 const MODOBJ = {};
+const KN = {};
 const MD = [-0.1, 0.16, 0.34, -0.4, 0.5]; // бункер поднимается первым, потом бак едет под ним: они лежат друг над другом
 const WINGK = [1, 1, 1, 0.85, 0.55]; // плечи бака и бункера, которые лежат друг над другом, раскрываются меньше
 const LOWK = [0.8, 0.5, 0.4, 0.15, 0.1]; // нижние лепестки: у низкого бака почти не раскрываются, чтобы не задеть тележки
@@ -370,7 +372,8 @@ SHELLS.forEach((S) => {
     if (sd < 0) { a0 = mir(t.b); b0 = mir(t.a); if (b0 <= a0) b0 += 360; e0 = mir(t.e); open = -open; }
     if (t.nm === 'L' || t.nm === 'L2') open *= LOWK[S.k];
     if (t.nm === 'S1' || t.nm === 'S2') open *= WINGK[S.k];
-    const {g, cA, cB, pivA, pivB} = shellGeo(S.A, S.B, deg(a0), deg(b0), deg(e0));
+    const {g, cA, cB, pivA, pivB, kn} = shellGeo(S.A, S.B, deg(a0), deg(b0), deg(e0));
+    (KN[S.id] = KN[S.id] || []).push(...kn.map((k) => ({a: k.a, qa: new THREE.Quaternion(), sa: new THREE.Vector3(1, 1, 1), b: k.b, qb: new THREE.Quaternion(), sb: new THREE.Vector3(1, 1, 1)})));
     const isNose = S.id === 'nose' ? 1 : 0;
     const m = new THREE.Mesh(g, shellMaterial(1, S.win, S.bands, [S.A.L, Math.PI * S.A.w / 2], [S.B.L, 5.2], isNose, isNose));
     m.updateMorphTargets();
@@ -544,7 +547,7 @@ for (const s of [1, -1]) {
 const pm1 = mat(C.black, {metalness: 0.45});
 add('pilot', {obj: grp(at(box(1.0, 0.8, 2.1, pm1), 0, 0, 0)), A: pose([6.9, 0.7, 0], [0, 0, 0.35]), B: pose([13.4, 0.9, 0], [0, 0, 0.45], [1.6, 0.35, 1.2]), d: 0.38, ex: [2.2, 1.2, 0.0], tw: {axis: [0, 0, 1], ang: -0.9}, arc: 1.6, label: 'Пилот', tint: [C.black, C.light, pm1]});
 const dm = mat(C.dark, {metalness: 0.6});
-add('door', {obj: grp(cyl(1.0, 0.14, dm, 40)), A: pose([6.55, 2.9, 0]), B: pose([14.1, 1.85, 0], [0, 0, 0], [1, 0.4, 0.5]), d: 0.48, ex: [3.0, 2.6, 0.0], tw: {axis: [0, 1, 0], ang: 1.3}, flip: true, arc: 2.2, label: 'Дверца дымовой коробки', tint: [C.dark, C.light, dm]});
+add('door', {obj: grp(cyl(1.0, 0.14, dm, 40)), A: pose([6.55, 2.9, 0]), B: pose([13.6, 1.55, 0], [0, 0, 0], [0.7, 0.58, 0.58]), d: 0.48, ex: [3.0, 2.6, 0.0], tw: {axis: [0, 1, 0], ang: 1.3}, flip: true, arc: 2.2, label: 'Дверца дымовой коробки', tint: [C.dark, C.light, dm]});
 const lampM = mat(C.steel, {metalness: 0.8, emissive: 0x000000});
 add('lamp', {obj: grp(cyl(0.22, 0.4, lampM, 20)), A: pose([6.3, 4.15, 0]), B: pose([13.5, 2.15, 0], [0, 0, 0], [1.0, 0.6, 2.2]), d: 0.5, ex: [2.0, 4.2, 0.4], tw: {axis: [0, 0, 1], ang: 1.0}, arc: 2.0, label: 'Фара'});
 for (const [id, label, A, B, rs, ex] of [
@@ -754,9 +757,10 @@ for (const [id, xA, xB] of [['hatch1', -9.4, -9.0], ['hatch2', -6.9, -13.4]]) {
 
 // рой мелких деталей: каждая едет из своей точки в свою, вместе со своим модулем
 class Swarm {
-  constructor(geo, mt, mod, items) { items.forEach((it) => { it.a.x = X(it.a.x); }); this.mod = mod; this.items = items; this.mesh = new THREE.InstancedMesh(geo, mt, items.length); this.mesh.castShadow = true; this.mesh.receiveShadow = true; this.mesh.frustumCulled = false; scene.add(this.mesh); swarms.push(this); }
+  constructor(geo, mt, mod, items, noMap) { if (!noMap) items.forEach((it) => { it.a.x = X(it.a.x); }); this.mod = mod; this.items = items; this.mesh = new THREE.InstancedMesh(geo, mt, items.length); this.mesh.castShadow = true; this.mesh.receiveShadow = true; this.mesh.frustumCulled = false; scene.add(this.mesh); swarms.push(this); }
 }
 const swarms = [];
+const _tc = new THREE.Color();
 const _sm = new THREE.Matrix4(), _spp = new THREE.Vector3(), _sqq = new THREE.Quaternion(), _sss = new THREE.Vector3();
 function swarmUpdate(S, p) {
   const d = MD[S.mod.k];
@@ -769,6 +773,7 @@ function swarmUpdate(S, p) {
     S.mesh.setMatrixAt(i, _sm.compose(_spp, _sqq, _sss));
   });
   S.mesh.instanceMatrix.needsUpdate = true;
+  if (S.tint) { S.mesh.material.color.setHex(S.tint[0]).lerp(_tc.setHex(S.tint[1]), m); S.mesh.material.metalness = lerp(0.85, 0.1, m); }
 }
 {
   const R = (i, k) => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
@@ -794,22 +799,55 @@ function swarmUpdate(S, p) {
 }
 
 
+// ---------- выдвижные детали ----------
+{
+  // телескопические муфты: две на модуль выезжают из силового блока к концам вагона
+  const unit = new THREE.CylinderGeometry(1, 1, 1, 36, 1, true); unit.rotateZ(PI / 2);
+  SHELLS.forEach((S) => {
+    for (const sd of [1, -1]) {
+      const sm = mat(C.dark, {metalness: 0.75, roughness: 0.35}); sm.side = THREE.DoubleSide;
+      const g = grp(new THREE.Mesh(unit, sm));
+      for (const x of [-0.5, 0.5]) { const t = new THREE.Mesh(new THREE.TorusGeometry(1, 0.035, 8, 36), mat(C.brass, {metalness: 0.85, roughness: 0.3})); t.rotation.y = PI / 2; t.position.x = x; g.add(t); }
+      for (let i = 0; i < 3; i++) { const rb = box(1.0, 0.05, 0.05, mat(C.steel, {metalness: 0.9})); rb.position.set(0, Math.cos(i * 2.09), Math.sin(i * 2.09)); g.add(rb); }
+      const xcA = S.A.x0 + S.A.L / 2, xcB = S.B.x0 + S.B.L / 2;
+      add('slv_' + S.id + (sd > 0 ? 'F' : 'R'), {obj: g, noMap: true, A: pose([xcA + sd * 0.12 * S.A.L, S.A.yc, 0], [0, 0, 0], [0.35 * S.A.L, S.A.h * 0.28, S.A.h * 0.28]), B: S.id === 'nose' ? pose([xcB + sd * 0.15 * S.B.L, 1.9, 0], [0, 0, 0], [1.0, 0.72, 0.72]) : pose([xcB + sd * 0.38 * S.B.L, 1.95, 0], [0, 0, 0], [1.1, 1.05, 1.05]),
+        d: MD[S.k] + 0.03, mod: MODOBJ[S.id], arc: 0.3, label: 'Выдвижная муфта', tint: [C.dark, C.light, sm]});
+    }
+  });
+  // носовой обтекатель: конус искрогасителя внутри дымовой коробки выезжает вперёд и удлиняет нос
+  const bm = mat(C.black, {metalness: 0.3, roughness: 0.5});
+  const beak = new THREE.Mesh(new THREE.LatheGeometry([[0, 0], [0.5, 0.15], [0.78, 0.6], [0.78, 1.1], [0.55, 1.6], [0.25, 1.9], [0, 2.0]].map(([r, y]) => new THREE.Vector2(r, y)), 36), bm); beak.rotation.z = -PI / 2;
+  add('beak', {obj: grp(beak), A: pose([7.2, 2.9, 0], [0, 0, 0], [0.45, 0.4, 0.4]), B: pose([13.55, 1.55, 0], [0, 0, 0], [0.95, 0.55, 0.55]), d: MD[0] + 0.12, mod: MODOBJ.nose, arc: 0.3, label: 'Носовой обтекатель', tint: [C.black, C.white, bm]});
+  // шарнирные петли на кромке каждой створки: латунные цапфы по оси шарнира, едут вместе с модулем
+  const knGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.22, 10); knGeo.rotateZ(PI / 2);
+  ['nose', 'b1', 'b2', 'tail', 'b3'].forEach((id) => { const sw = new Swarm(knGeo, mat(C.brass, {metalness: 0.85, roughness: 0.3}), MODOBJ[id], KN[id], true); sw.tint = [C.brass, 0xe9e6e0]; });
+}
+
 // ---------- гидроцилиндры (кинематические связи между деталями) ----------
 const jacks = [];
-function jack(pa, la, pb, lb) {
-  const bm = mat(C.steel, {metalness: 0.9, roughness: 0.25}), rm = mat(0xd9dbde, {metalness: 0.9, roughness: 0.2});
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 1, 12), bm);
-  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 1, 10), rm);
-  const e1 = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 8), mat(C.brass)), e2 = e1.clone();
-  [barrel, rod, e1, e2].forEach((o) => { o.castShadow = true; o.frustumCulled = false; scene.add(o); });
-  jacks.push({pa: byName[pa], la: new THREE.Vector3(...la), pb: byName[pb], lb: new THREE.Vector3(...lb), barrel, rod, e1, e2});
+// трёхступенчатый телескопический привод: цилиндр, средняя ступень, шток
+function jack(pa, la, pb, lb, kind = 'big') {
+  const R = kind === 'act' ? 0.05 : 0.075;
+  const bm = mat(C.steel, {metalness: 0.9, roughness: 0.25}), mm = mat(0xb9bcc2, {metalness: 0.9, roughness: 0.22}), rm = mat(0xe6e8eb, {metalness: 0.95, roughness: 0.15});
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(R, R, 1, 12), bm);
+  const mid = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.72, R * 0.72, 1, 12), mm);
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.5, R * 0.5, 1, 10), rm);
+  const e1 = new THREE.Mesh(new THREE.SphereGeometry(R * 1.35, 12, 8), mat(C.brass)), e2 = e1.clone();
+  [barrel, mid, rod, e1, e2].forEach((o) => { o.castShadow = true; o.frustumCulled = false; scene.add(o); });
+  jacks.push({pa: byName[pa], la: new THREE.Vector3(...la), pb: byName[pb], lb: new THREE.Vector3(...lb), barrel, mid, rod, e1, e2});
 }
 for (const id of ['nose', 'b1', 'b2', 'b3', 'tail']) {
   const sp = id === 'nose' || id === 'b1' ? 'spA' : id === 'b2' ? 'spB' : 'spC';
   jack(sp + 'L', [0, 0, 0], id + 'U', [0, -0.5, 0]);
   jack(sp + 'R', [0, 0, 0], id + 'L', [0, 0.4, 0]);
+  // привод каждого лепестка: от силового блока к створке, раскрывает её
+  for (const nm of ['S1', 'S2', 'U', 'L', 'L2']) jack('core_' + id, [0, 0.1, 0], id + nm, [0, 0, 0], 'act');
 }
 BOGIE_X.forEach((x, k) => jack((k < 2 ? 'spA' : k < 4 ? 'spB' : 'spC') + (k % 2 ? 'R' : 'L'), [(x - [8.4, 8.4, -0.65, -0.65, -11, -11][k]) * 0, 0, 0], ['bg_pony', 'bg_eqL', 'bg_eqR', 'bg_tr', 'bg_t1', 'bg_t2'][k], [0.9, 0.1, (k % 2 ? -1 : 1) * 1.2]));
+// каждая колёсная пара привязана к своей тележке приводом: пока всё разъезжается, колёса не теряются
+AXLES.forEach((ax, k) => jack(ax.id, [0, 0, (k % 2 ? 1 : -1) * 0.72], ['bg_pony', 'bg_eqL', 'bg_eqR', 'bg_tr', 'bg_t1', 'bg_t2'][Math.floor(k / 2)], [(k % 2 ? -1.25 : 1.25), 0.05, (k % 2 ? 1 : -1) * 1.2], 'act'));
+AXLES.forEach((ax, k) => { byName[ax.id].yaw = (k % 2 ? 1 : -1) * (0.55 + 0.1 * (k % 3)); });
+['bg_pony', 'bg_eqL', 'bg_eqR', 'bg_tr', 'bg_t1', 'bg_t2'].forEach((n, k) => { byName[n].yaw = (k % 2 ? -1 : 1) * 0.45; });
 const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _q = new THREE.Quaternion();
 function updateJacks() {
   for (const j of jacks) {
@@ -817,11 +855,12 @@ function updateJacks() {
     _a.copy(j.la).applyMatrix4(j.pa.root.matrixWorld);
     _b.copy(j.lb).applyMatrix4(j.pb.root.matrixWorld);
     _d.subVectors(_b, _a);
-    const L = Math.max(_d.length(), 0.2);
+    const L = Math.max(_d.length(), 0.25);
     _d.normalize();
     _q.setFromUnitVectors(_up, _d);
-    const bl = L * 0.55, rl = L * 0.5;
+    const bl = L * 0.42, ml = L * 0.5, rl = L * 0.42;
     j.barrel.scale.set(1, bl, 1); j.barrel.quaternion.copy(_q); j.barrel.position.copy(_a).addScaledVector(_d, bl / 2);
+    j.mid.scale.set(1, ml, 1); j.mid.quaternion.copy(_q); j.mid.position.copy(_a).addScaledVector(_d, L * 0.5);
     j.rod.scale.set(1, rl, 1); j.rod.quaternion.copy(_q); j.rod.position.copy(_b).addScaledVector(_d, -rl / 2);
     j.e1.position.copy(_a); j.e2.position.copy(_b);
   }
@@ -887,6 +926,7 @@ function poseAll(p) {
     const pl = 0.78 + 0.08 * d, dtl = p - pl;
     let sq = 0;
     if (dtl > 0) { P.root.position.y += 0.04 * Math.exp(-26 * dtl) * Math.sin(95 * dtl + i); if (P.mod) sq = 0.035 * Math.exp(-20 * dtl) * Math.sin(80 * dtl); }
+    if (P.yaw) { _q2.setFromAxisAngle(Y_AXIS, P.yaw * Math.sin(PI * w0)); _q1.premultiply(_q2); }
     P.root.quaternion.copy(_q1);
     if (sq) { P.root.scale.y *= 1 - sq; P.root.scale.z *= 1 - sq; P.root.scale.x *= 1 + sq * 0.6; }
     if (P.morph) {
