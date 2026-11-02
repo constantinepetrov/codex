@@ -333,9 +333,11 @@ const SHELLS = [
   {id: 'b3', k: 4, label: 'Бак тендера', A: {x0: -11.6, L: 7.4, w: 2.6, h: 2.6, n: 2, yc: 2.0}, B: {...BODY, x0: -16.8, L: 5.0, nose: 'tail'}, win: 0, bands: 0},
 ];
 const SIDE = [1, -1, 1, -1, 1], ROLL = [1, -1, 1, -1, 1];
+const MODOBJ = {};
 const MD = [0.04, 0.14, 0.30, 0.16, 0.04]; // порядок старта модулей: носовые вперёд, хвостовые назад, середина последней
 SHELLS.forEach((S) => {
   const mod = {k: S.k, side: SIDE[S.k], dir: ROLL[S.k], ycA: S.A.yc, ycB: S.B.yc};
+  MODOBJ[S.id] = mod;
   for (const up of [1, 0]) {
     const {g, cA, cB} = shellGeo(S.A, S.B, !!up);
     const m = new THREE.Mesh(g, shellMaterial(up, S.win, S.bands, [S.A.L, Math.PI * S.A.w / 2], [S.B.L, 5.2], S.id === 'nose' && up ? 1 : 0, S.id === 'nose' && up ? 1 : 0));
@@ -668,6 +670,58 @@ for (const [id, xA, xB] of [['hatch1', -9.4, -9.0], ['hatch2', -6.9, -13.4]]) {
   add(id, {obj: grp(lathe([[0.5, -0.05], [0.46, 0.02], [0.4, 0.12], [0.3, 0.16], [0.0, 0.17]], mt, 24), at(cylV(0.05, 0.1, br, 8), 0, 0.2, 0)), A: pose([xA, 3.4, 0]), B: pose([xB, 3.95, 0], [0, 0, 0], [1.3, 0.9, 1.5]), d: 0.7, arc: 0.4, label: 'Люк', tint: [C.black, C.white, mt]});
 }
 
+// ---------- мелочи паровоза: каждая деталь едет в своё место на поезде ----------
+{
+  const bm = () => mat(C.black, {metalness: 0.5, roughness: 0.45}), steel = () => mat(C.steel, {metalness: 0.9, roughness: 0.28}), brass = () => mat(C.brass, {metalness: 0.85, roughness: 0.3});
+  const tube = (pts, r, mt, seg = 40) => new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(...p))), seg, r, 8), mt);
+  // номерной щиток над дверцей: гладкий, без цифр
+  { const mt = bm(); add('nplate', {obj: grp(box(0.05, 0.42, 0.78, mt), at(box(0.07, 0.34, 0.7, steel()), 0.01, 0, 0)), A: pose([6.6, 3.88, 0]), B: pose([14.0, 2.5, 0], [0, 0, 0.3], [1, 0.7, 0.5]), d: 0.02, mod: MODOBJ.nose, arc: 0.3, label: 'Номерной щиток', tint: [C.black, C.light, mt]}); }
+  // лестницы пилота: два столба и перекладины. На поезде встают поручнями у дверей
+  for (const sd of [1, -1]) {
+    const mt = steel(), L = new THREE.Group();
+    for (const z of [-0.18, 0.18]) L.add(at(cylV(0.025, 0.95, mt, 8), 0, 0, z));
+    for (let i = 0; i < 5; i++) L.add(at(cylZ(0.02, 0.36, mt, 6), 0, -0.4 + i * 0.2, 0));
+    add('lad' + (sd > 0 ? 'L' : 'R'), {obj: L, A: pose([6.9, 1.4, sd * 0.95], [0, 0, 0.2]), B: pose([4.7, 1.55, sd * 1.58]), d: 0.02, arc: 0.3, label: 'Лестница пилота'});
+  }
+  // ступени кабины: две подножки на сторону. На поезде встают под дверью хвостового вагона
+  for (const sd of [1, -1]) {
+    const mt = bm(), St = new THREE.Group();
+    for (let i = 0; i < 2; i++) St.add(at(box(0.7, 0.05, 0.34, mt), 0, i * 0.4, i * 0.15));
+    for (const x of [-0.3, 0.3]) St.add(at(box(0.04, 0.5, 0.04, mt), x, 0.2, 0.0));
+    add('stp' + (sd > 0 ? 'L' : 'R'), {obj: St, A: pose([-3.0, 0.9, sd * 1.5]), B: pose([-7.9, 0.75, sd * 1.64]), d: 0.5, arc: 0.3, label: 'Ступени кабины', tint: [C.black, C.dark, mt]});
+  }
+  // воздушный резервуар: в поезде лежит под полом среднего вагона
+  { const mt = steel(); const T = grp(cyl(0.28, 1.8, mt, 24), at(lathe([[0.28, 0], [0.22, 0.1], [0.0, 0.16]], mt, 20), 0.9, 0, 0), at(lathe([[0.28, 0], [0.22, 0.1], [0.0, 0.16]], mt, 20), -0.9, 0, 0)); T.children[1].rotation.z = -PI / 2; T.children[2].rotation.z = PI / 2;
+    T.add(at(box(0.08, 0.5, 0.08, bm()), -0.5, -0.3, 0), at(box(0.08, 0.5, 0.08, bm()), 0.5, -0.3, 0));
+    add('airtank', {obj: T, A: pose([1.0, 1.3, 1.42]), B: pose([-1.4, 0.65, 0.0]), d: 0.3, mod: MODOBJ.b2, arc: 0.3, label: 'Воздушный резервуар', tint: [C.steel, C.light, mt]}); }
+  // воздушный насос: два сдвоенных цилиндра. В поезде компрессор под полом головного вагона
+  { const mt = bm(); const P = grp(cylV(0.2, 0.7, mt, 18), at(cylV(0.14, 0.5, steel(), 14), 0, 0.55, 0), at(cylV(0.1, 0.1, brass(), 10), 0, 0.85, 0), at(box(0.5, 0.06, 0.4, mt), 0, -0.35, 0));
+    add('airpump', {obj: P, A: pose([5.1, 2.3, -1.28]), B: pose([7.7, 0.75, 0.0], [0, 0, PI / 2]), d: 0.04, mod: MODOBJ.nose, arc: 0.3, label: 'Воздушный насос', tint: [C.black, C.dark, mt]}); }
+  // турбогенератор прожектора: на поезде крышевой блок
+  { const mt = bm(); const G = grp(cyl(0.2, 0.6, mt, 18), at(lathe([[0.2, 0], [0.17, 0.08], [0.0, 0.14]], steel(), 16), 0.3, 0, 0), at(box(0.3, 0.3, 0.3, steel()), -0.1, 0.2, 0)); G.children[1].rotation.z = -PI / 2;
+    add('gener', {obj: G, A: pose([5.8, 3.65, 0.95]), B: pose([5.6, 4.05, 0.7], [0, 0, 0], [1.5, 0.5, 1.6]), d: 0.1, mod: MODOBJ.nose, arc: 0.3, label: 'Турбогенератор', tint: [C.black, C.white, mt]}); }
+  // колокол: в поезде становится сигнальным гудком на крыше
+  { const mt = brass(); add('bell', {obj: grp(lathe([[0.3, 0], [0.26, 0.08], [0.2, 0.22], [0.12, 0.3], [0.0, 0.34]], mt, 20), at(box(0.45, 0.06, 0.1, bm()), 0, 0.36, 0)), A: pose([4.6, 4.05, 0]), B: pose([8.4, 4.0, -0.5], [0, 0, 0], [0.8, 0.7, 0.8]), d: 0.12, mod: MODOBJ.b1, arc: 0.3, label: 'Колокол'}); }
+  // питательная труба по котлу: на поезде кабель-канал по крыше
+  { const mt = steel(); const F = grp(tube([[-1.7, 0, 0], [-0.8, 0.05, 0], [0.8, 0.0, 0], [1.7, -0.1, 0]], 0.05, mt, 30)); for (const x of [-1.2, 0, 1.2]) F.add(at(cyl(0.08, 0.05, brass(), 10), x, 0.02, 0));
+    add('feed', {obj: F, A: pose([2.9, 2.45, 1.18]), B: pose([7.2, 4.0, -0.9], [0, 0, 0], [1.4, 1, 1]), d: 0.14, mod: MODOBJ.b1, arc: 0.3, label: 'Питательная труба'}); }
+  // песочные трубки к колёсам: две пары. В поезде тормозные магистрали тележек
+  for (const sd of [1, -1]) {
+    const mt = steel(); const Sg = grp(tube([[0, 0.5, 0], [0.1, 0.1, 0.05 * sd], [0.15, -0.35, 0.12 * sd], [0.3, -0.62, 0.15 * sd]], 0.025, mt, 20), tube([[0.5, 0.5, 0], [0.6, 0.1, 0.05 * sd], [0.7, -0.35, 0.12 * sd], [0.8, -0.62, 0.15 * sd]], 0.025, mt, 20));
+    add('sandp' + (sd > 0 ? 'L' : 'R'), {obj: Sg, A: pose([2.4, 1.5, sd * 1.08]), B: pose([BOGIE_X[1] - 0.3, 0.9, sd * 1.12]), d: 0.2, arc: 0.3, label: 'Песочные трубки'});
+  }
+  // тормозная рычажная передача: балка с колодками. В поезде тормозная балка тележки
+  for (const sd of [1, -1]) {
+    const mt = bm(); const Bg = grp(box(3.4, 0.08, 0.08, mt)); for (const x of [-1.5, -0.5, 0.5, 1.5]) Bg.add(at(box(0.18, 0.28, 0.09, steel()), x, 0.1, 0), at(cylV(0.02, 0.35, steel(), 6), x, -0.2, 0));
+    add('brk' + (sd > 0 ? 'L' : 'R'), {obj: Bg, A: pose([0.9, 0.55, sd * 0.52]), B: pose([BOGIE_X[2], 0.58, sd * 0.52]), d: 0.5, arc: 0.3, label: 'Тормозная передача', tint: [C.black, C.dark, mt]});
+  }
+  // ящик с инструментом на тендере: в поезде крышевой блок хвостового вагона
+  { const mt = bm(); add('tbox', {obj: grp(box(1.1, 0.36, 0.5, mt), at(box(1.1, 0.04, 0.54, steel()), 0, 0.2, 0), at(box(0.1, 0.1, 0.06, brass()), 0.4, 0.05, 0.27)), A: pose([-4.8, 4.35, -0.9]), B: pose([-8.6, 4.0, -0.8], [0, 0, 0], [1.2, 0.8, 1.0]), d: 0.14, mod: MODOBJ.tail, arc: 0.3, label: 'Ящик для инструмента', tint: [C.black, C.white, mt]}); }
+  // фонарь тендера: в поезде бордовый хвостовой огонь
+  { const lm = new THREE.MeshStandardMaterial({color: 0x651e32, emissive: 0xd0284f, emissiveIntensity: 0, roughness: 0.3}); mats.push(lm);
+    add('tlamp', {obj: grp(cyl(0.16, 0.2, lm, 16), at(box(0.1, 0.34, 0.34, bm()), -0.14, 0, 0)), A: pose([-11.85, 3.3, 0]), B: pose([-16.75, 1.9, 0], [0, 0, 0], [1, 1.4, 1.4]), d: 0.04, mod: MODOBJ.b3, arc: 0.3, label: 'Фонарь тендера', emis: lm}); }
+}
+
 // рой мелких деталей: каждая едет из своей точки в свою, вместе со своим модулем
 class Swarm {
   constructor(geo, mt, mod, items) { this.mod = mod; this.items = items; this.mesh = new THREE.InstancedMesh(geo, mt, items.length); this.mesh.castShadow = true; this.mesh.receiveShadow = true; this.mesh.frustumCulled = false; scene.add(this.mesh); swarms.push(this); }
@@ -855,6 +909,54 @@ window.__collide = (p, cell = 0.3) => {
   return pairs;
 };
 
+// ---------- пар: частицы из трубы, цилиндровых кранов и раскрывающихся швов ----------
+// Пар не деталь (возникает и тает), поэтому считается отдельно: каждая частица живёт по формуле от времени clock.T.
+const clock = {T: 0};
+const STEAM = {on: true};
+const steamEm = [];
+function emitter(o) { o.parts = []; steamEm.push(o); return o; }
+const seedR = (i, k) => { const x = Math.sin(i * 91.7 + k * 17.3) * 43758.5453; return x - Math.floor(x); };
+emitter({name: 'chim', N: 220, life: 3.6, speed: 3.2, dir: [-0.28, 1, 0], size: [0.5, 2.6], spread: 0.25, pos: (o) => byName.chim.root.localToWorld(o.set(0, 0.62, 0)), str: (p, T) => (1 - sstep(0.04, 0.10, p)) * (0.7 + 0.3 * Math.sin(T * 13.8))});
+for (const sd of [1, -1]) emitter({name: 'cock' + sd, N: 60, life: 0.9, speed: 4.5, dir: [0.35, -0.55, sd * 1], size: [0.15, 0.8], spread: 0.35, pos: (o) => byName['cyl' + (sd > 0 ? 'L' : 'R')].root.localToWorld(o.set(0.45, -0.28, 0)), str: (p, T) => (1 - sstep(0.04, 0.10, p)) * (((T % 1.7) < 0.55) ? 1 : 0)});
+['nose', 'b1', 'b2', 'tail', 'b3'].forEach((id, k) => emitter({name: 'vent' + id, N: 100, life: 2.6, speed: 2.4, dir: [0, 1, SIDE[k] * 0.35], size: [0.5, 2.2], spread: 0.5, wide: [id, k],
+  pos: (o, i) => { const P = byName[id + 'L']; o.copy(P.root.position); o.x += (seedR(i, 3) - 0.5) * 3.0; o.y += 0.7; return o; },
+  str: (p, T) => { const d = MD[k]; return sstep(0.08 + 0.06 * d, 0.26 + 0.06 * d, p) * (1 - sstep(0.62 + 0.05 * d, 0.80 + 0.05 * d, p)) * (0.6 + 0.4 * Math.sin(T * 5 + k)); }}));
+const STEAM_N = steamEm.reduce((a, e) => a + e.N, 0);
+const sPos = new Float32Array(STEAM_N * 3), sA = new Float32Array(STEAM_N), sS = new Float32Array(STEAM_N);
+const sGeo = new THREE.BufferGeometry();
+sGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3).setUsage(THREE.DynamicDrawUsage));
+sGeo.setAttribute('aA', new THREE.BufferAttribute(sA, 1).setUsage(THREE.DynamicDrawUsage));
+sGeo.setAttribute('aS', new THREE.BufferAttribute(sS, 1).setUsage(THREE.DynamicDrawUsage));
+const steamMat = new THREE.ShaderMaterial({
+  uniforms: {uK: {value: 600}},
+  vertexShader: 'attribute float aA; attribute float aS; varying float vA; uniform float uK; void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = aS * uK / max(-mv.z, 0.1); vA = aA; }',
+  fragmentShader: 'varying float vA; void main(){ float d = length(gl_PointCoord - 0.5) * 2.0; float a = smoothstep(1.0, 0.1, d); a = a * a * vA; if (a < 0.004) discard; vec3 col = mix(vec3(0.97, 0.97, 0.98), vec3(0.52, 0.56, 0.63), smoothstep(0.15, 1.0, d) * 0.85); gl_FragColor = vec4(col, min(a * 1.35, 0.9)); }',
+  transparent: true, depthWrite: false,
+});
+const steamPts = new THREE.Points(sGeo, steamMat); steamPts.frustumCulled = false; steamPts.renderOrder = 6; scene.add(steamPts);
+const _ev = new THREE.Vector3();
+function updateSteam(p, v) {
+  let n = 0;
+  const T = clock.T;
+  for (const e of steamEm) {
+    e.root0 = e.root0 || new THREE.Vector3();
+    const s = STEAM.on ? e.str(p, T) : 0;
+    for (let i = 0; i < e.N; i++, n++) {
+      const age = (T / e.life + seedR(i, 1)) % 1;
+      e.pos(_ev, i);
+      const sp = e.speed * age * e.life, sd = e.spread;
+      const ox = e.dir[0] * sp + (seedR(i, 4) - 0.5) * sd * age * 2 - v * 0.03 * age * e.life;
+      const oy = e.dir[1] * sp * (1 - 0.35 * age) + Math.sin(T * 1.4 + i) * 0.04 * age;
+      const oz = e.dir[2] * sp + (seedR(i, 5) - 0.5) * sd * age * 2;
+      sPos[n * 3] = _ev.x + ox; sPos[n * 3 + 1] = _ev.y + oy; sPos[n * 3 + 2] = _ev.z + oz;
+      sA[n] = s * Math.pow(1 - age, 1.2) * sstep(0, 0.05, age) * 1.0;
+      sS[n] = lerp(e.size[0], e.size[1], Math.sqrt(age)) * 1.5;
+    }
+  }
+  sGeo.attributes.position.needsUpdate = sGeo.attributes.aA.needsUpdate = sGeo.attributes.aS.needsUpdate = true;
+  steamMat.uniforms.uK.value = renderer.domElement.height / (2 * Math.tan(camera.fov * PI / 360));
+}
+
 // ---------- ход, колёса ----------
 const state = {p: 0, target: null, tspeed: 0.05, S: 0, tour: true, idleT: 0, ghost: false, tourT: 0};
 function speedAt(p) { return 83 * Math.pow(sstep(0.94, 1.0, p), 1.4) + 1.6 * (1 - sstep(0.04, 0.10, p)); }
@@ -891,7 +993,7 @@ ui.innerHTML = `
  <svg id="gantt" viewBox="0 0 1000 96" preserveAspectRatio="none"></svg>
  <div class="lbg-btns"><button data-a="loco">Паровоз</button><button data-a="split">Раскрыть</button><button data-a="build">Собрать в скоростной</button><button data-a="go">Поехали</button></div>
  <input id="sl" type="range" min="0" max="1000" value="0">
- <div class="lbg-btns"><button data-v="q">3/4</button><button data-v="s">Сбоку</button><button data-v="f">Спереди</button><button data-v="t">Сверху</button><button data-a="ghost">Прозрачный корпус</button></div>
+ <div class="lbg-btns"><button data-v="q">3/4</button><button data-v="s">Сбоку</button><button data-v="f">Спереди</button><button data-v="t">Сверху</button><button data-a="steam" class="on">Пар</button><button data-a="ghost">Прозрачный корпус</button></div>
 </div>
 <div class="lbg-panels">
  <div class="pn"><h4>Модули</h4><div id="mods"></div></div>
@@ -987,6 +1089,7 @@ ui.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
   if (a === 'split') animateTo(0.30, 0.10);
   if (a === 'build') animateTo(0.94, 0.09);
   if (a === 'go') animateTo(1, 0.1);
+  if (a === 'steam') { STEAM.on = !STEAM.on; b.classList.toggle('on', STEAM.on); }
   if (a === 'ghost') { state.ghost = !state.ghost; b.classList.toggle('on', state.ghost); setGhost(); userTouch(); }
 }));
 sl.addEventListener('input', () => { userTouch(); state.target = null; state.p = sl.value / 1000; });
@@ -1040,6 +1143,7 @@ function frame(now) {
     camera.position.lerpVectors(state.cam.from, state.cam.to, e);
     if (state.cam.t >= 1) state.cam = null;
   }
+  clock.T += dt;
   const v = advance(dt);
   poseAll(state.p);
   if (state.tour) {
@@ -1049,6 +1153,7 @@ function frame(now) {
     camera.position.copy(controls.target).add(_v);
   }
   updateJacks();
+  scene.updateMatrixWorld(true); updateSteam(state.p, v);
   controls.update();
   composer.render();
   // панели читают те же величины, что двигают детали
@@ -1090,7 +1195,7 @@ window.__film = (t) => {
   controls.target.set(tx, 2.2, 0);
   camera.position.set(tx + Math.cos(ang) * rad, hgt, Math.sin(-ang) * rad * 0.9 + 6 * (1 - Math.min(1, k * 2)));
   camera.lookAt(controls.target);
-  poseAll(p); updateJacks();
+  poseAll(p); updateJacks(); clock.T = t; scene.updateMatrixWorld(true); updateSteam(p, speedAt(p));
   composer.render();
   return p;
 };
