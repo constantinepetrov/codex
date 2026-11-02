@@ -212,24 +212,36 @@ const grp = (...c) => { const g = new THREE.Group(); c.forEach((x) => g.add(x));
 // 1. оболочки
 const BODY = {w: 3.0, h: 3.25, n: 3.4, yc: 2.4};
 const SHELLS = [
-  {id: 'nose', label: 'Дымовая коробка', A: {x0: 5.0, L: 1.55, w: 2.25, h: 2.25, n: 2, yc: 2.9}, B: {...BODY, x0: 9.2, L: 5.0, nose: 'front'}, win: 0, bands: 0},
-  {id: 'b1', label: 'Котёл', A: {x0: 0.75, L: 4.25, w: 2.1, h: 2.1, n: 2, yc: 2.9}, B: {...BODY, x0: 4.0, L: 5.2}, win: 1, bands: 1},
-  {id: 'b2', label: 'Топка', A: {x0: -2.7, L: 3.4, w: 2.5, h: 2.5, n: 2, yc: 2.85}, B: {...BODY, x0: -6.4, L: 10.0}, win: 1, bands: 1},
-  {id: 'b3', label: 'Бак тендера', A: {x0: -11.6, L: 7.4, w: 2.6, h: 2.6, n: 2, yc: 2.0}, B: {...BODY, x0: -11.8, L: 5.0}, win: 1, bands: 0},
-  {id: 'tail', label: 'Угольный бункер', A: {x0: -8.0, L: 3.8, w: 2.7, h: 1.1, n: 4, yc: 3.45}, B: {...BODY, x0: -16.8, L: 5.0, nose: 'tail'}, win: 0, bands: 0},
+  {id: 'nose', k: 0, label: 'Дымовая коробка', A: {x0: 5.0, L: 1.55, w: 2.25, h: 2.25, n: 2, yc: 2.9}, B: {...BODY, x0: 9.2, L: 5.0, nose: 'front'}, win: 0, bands: 0},
+  {id: 'b1', k: 1, label: 'Котёл', A: {x0: 0.75, L: 4.25, w: 2.1, h: 2.1, n: 2, yc: 2.9}, B: {...BODY, x0: 4.0, L: 5.2}, win: 1, bands: 1},
+  {id: 'b2', k: 2, label: 'Топка', A: {x0: -2.7, L: 3.4, w: 2.5, h: 2.5, n: 2, yc: 2.85}, B: {...BODY, x0: -6.4, L: 10.0}, win: 1, bands: 1},
+  {id: 'tail', k: 3, label: 'Угольный бункер', A: {x0: -8.0, L: 3.8, w: 2.7, h: 1.1, n: 4, yc: 3.45}, B: {...BODY, x0: -11.8, L: 5.0}, win: 1, bands: 0},
+  {id: 'b3', k: 4, label: 'Бак тендера', A: {x0: -11.6, L: 7.4, w: 2.6, h: 2.6, n: 2, yc: 2.0}, B: {...BODY, x0: -16.8, L: 5.0, nose: 'tail'}, win: 0, bands: 0},
 ];
-const shellExUp = {nose: [1.5, 4.8, 0.8], b1: [0.5, 4.4, -1.2], b2: [-0.8, 4.0, 1.0], b3: [-1.0, 4.2, -0.8], tail: [-1.5, 5.4, 0.6]};
-const shellExLo = {nose: [2.2, 0.2, 3.4], b1: [1.0, 0.0, -3.8], b2: [-1.2, 0.2, 3.9], b3: [-1.2, 0.0, -4.0], tail: [-2.0, 1.2, 3.8]};
-SHELLS.forEach((S, k) => {
+const SIDE = [1, -1, 1, -1, 1], ROLL = [1, -1, 1, -1, 1];
+SHELLS.forEach((S) => {
+  const mod = {k: S.k, side: SIDE[S.k], dir: ROLL[S.k], ycA: S.A.yc, ycB: S.B.yc};
   for (const up of [1, 0]) {
     const {g, cA, cB} = shellGeo(S.A, S.B, !!up);
     const m = new THREE.Mesh(g, shellMaterial(up, S.win, S.bands));
     m.updateMorphTargets();
-    const P = add(S.id + (up ? 'U' : 'L'), {
-      obj: m, A: pose(cA), B: pose(cB), d: 0.12 + 0.16 * k + (up ? 0 : 0.05),
-      ex: up ? shellExUp[S.id] : shellExLo[S.id], tw: {axis: [1, 0, 0], ang: up ? 0.7 : -0.7}, arc: up ? 3.2 : 1.0, label: S.label, morph: m, shell: true,
+    const sd = SIDE[S.k];
+    const pz = (w) => (up ? 1 : -1) * sd * w / 2;
+    add(S.id + (up ? 'U' : 'L'), {
+      obj: m, A: pose(cA), B: pose(cB), d: 0.04 + 0.12 * S.k, arc: 0.3, label: S.label, morph: m, shell: true, mod,
+      sh: {up, side: sd, pivA: new THREE.Vector3(0, S.A.yc - cA[1], pz(S.A.w)), pivB: new THREE.Vector3(0, S.B.yc - cB[1], pz(S.B.w * (S.B.nose ? 0.8 : 1)))},
     });
   }
+  // начинка: пучок труб, шестерни и бордовый блок. Едет вместе с модулем и видна, когда оболочка раскрыта
+  const core = new THREE.Group();
+  const cm = mat(C.dark, {metalness: 0.7, roughness: 0.4}), bm = mat(C.brass, {metalness: 0.8}), rm = mat(C.steel, {metalness: 0.85});
+  const hot = new THREE.MeshStandardMaterial({color: 0x3a0e18, emissive: 0x651e32, emissiveIntensity: 0.9, roughness: 0.5}); mats.push(hot);
+  core.add(cyl(0.3, 1, cm, 16));
+  for (let i = 0; i < 6; i++) { const t = cyl(0.12, 1, i % 2 ? rm : bm, 10); t.position.set(0, Math.sin(i * PI / 3) * 0.6, Math.cos(i * PI / 3) * 0.6); core.add(t); }
+  for (const x of [-0.32, 0.32]) { const gr = cyl(0.85, 0.04, cm, 14); gr.position.x = x; core.add(gr); const h2 = cyl(0.5, 0.05, bm, 14); h2.position.x = x; core.add(h2); }
+  core.add(at(box(0.5, 0.34, 0.5, hot), 0, 0.15, 0));
+  const xcA = S.A.x0 + S.A.L / 2, xcB = S.B.x0 + S.B.L / 2;
+  add('core_' + S.id, {obj: core, A: pose([xcA, S.A.yc, 0], [0, 0, 0], [S.A.L * 0.9, S.A.w / 2 * 0.8, S.A.h / 2 * 0.8]), B: pose([xcB, 1.75, 0], [0, 0, 0], [S.B.L * 0.8, 1.0, 1.0]), d: 0.04 + 0.12 * S.k, arc: 0.3, label: 'Силовой блок', mod});
 });
 
 // 2. рама: три вложенных короба, выдвигаются телескопически
@@ -290,7 +302,7 @@ AXLES.forEach((a, k) => {
   const shaft = cylZ(0.1, 1.7, mat(C.steel), 16);
   spin.add(shaft);
   for (const s of [1, -1]) { const w = makeWheel(a.r, s, a.pin); w.position.z = s * 0.72; spin.add(w); }
-  const bx = BOGIE_X[Math.floor(k / 2)] + (k % 2 ? 1.2 : -1.2);
+  const bx = BOGIE_X[Math.floor(k / 2)] + (k % 2 ? -1.2 : 1.2);
   // ось, которая в паровозе тянет вперёд, становится передней осью тележки: порядок по x сохраняется
   add(a.id, {
     obj: spin, A: pose([a.x, a.r, 0]), B: pose([bx, RF, 0], [0, 0, 0], [RF / a.r, RF / a.r, 1]), d: 0.05 + 0.07 * k,
@@ -419,6 +431,18 @@ for (const [car, x] of [[1, 5.4], [2, 2.4], [3, -7.9]]) { /* ориентиры 
   add('whistle', {obj: grp(cylV(0.1, 0.5, wm, 14)), A: pose([1.0, 4.25, 0.5]), B: pose([-4.0, 4.1, 0], [0, 0, 0], [3.0, 0.4, 5.5]), d: 0.58, ex: [0.0, 3.4, 1.0], tw: {axis: [0, 0, 1], ang: 2.0}, flip: true, arc: 2.2, label: 'Свисток'});
 }
 
+// шарниры: створки раскрываются, пока модуль едет, и защёлкиваются на месте
+for (const sd of ['L', 'R']) {
+  const sg = sd === 'L' ? 1 : -1;
+  byName['cabW' + sd].hg = {axis: [1, 0, 0], piv: [0, -1.2, 0], ang: sg * 1.6};
+  byName['run' + sd].hg = {axis: [1, 0, 0], piv: [0, 0, -sg * 0.25], ang: sg * 1.5};
+  byName['tpl' + sd].hg = {axis: [1, 0, 0], piv: [0, -0.25, 0], ang: sg * 1.5};
+}
+byName.cabRoof.hg = {axis: [0, 0, 1], piv: [-1.5, 0, 0], ang: 0.9};
+byName.chim.hg = {axis: [0, 0, 1], piv: [0, -0.5, 0], ang: -1.4};
+byName.pilot.hg = {axis: [0, 0, 1], piv: [-0.5, -0.4, 0], ang: -0.7};
+byName.door.hg = {axis: [0, 1, 0], piv: [0, 0, 1.0], ang: 1.3};
+
 // ---------- гидроцилиндры (кинематические связи между деталями) ----------
 const jacks = [];
 function jack(pa, la, pb, lb) {
@@ -452,52 +476,68 @@ function updateJacks() {
   }
 }
 
+parts.forEach((P) => { if (!P.shell && P.arc > 0.6) P.arc = 0.6; });
+
 // ---------- расчёт позы по прогрессу ----------
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _v = new THREE.Vector3();
-const FLIP_AXIS = {};
 function tint(P, m) {
   if (!P.tint) return;
   const [a, b, mt] = P.tint;
   mt.color.setHex(a).lerp(new THREE.Color(b), m);
 }
-const FOLD_C = new THREE.Vector3(0.5, 2.3, 0), _F = new THREE.Vector3(), _J = new THREE.Vector3();
 const backOut = (t, k = 1.5) => { const x = t - 1; return 1 + (k + 1) * x * x * x + k * x * x; };
+const X_AXIS = new THREE.Vector3(1, 0, 0), _pv = new THREE.Vector3(), _pv2 = new THREE.Vector3(), _qn = new THREE.Quaternion();
+// поворот детали вокруг шарнира, заданного точкой pivL в её собственных координатах
+function hingeAbout(P, axis, pivL, th) {
+  _q2.setFromAxisAngle(axis, th);
+  _qn.copy(_q1).multiply(_q2);
+  P.root.position.add(_pv.copy(pivL).applyQuaternion(_q1)).sub(_pv2.copy(pivL).applyQuaternion(_qn));
+  _q1.copy(_qn);
+}
+const _ax = new THREE.Vector3(), _pl = new THREE.Vector3();
 function poseAll(p) {
   parts.forEach((P, i) => {
     const d = P.d;
-    const u = sstep(0.06 + 0.07 * d, 0.30 + 0.07 * d, p);
-    const a = sstep(0, 0.45, u);                       // деталь раскрывается на шарнире
-    const c = Math.pow(sstep(0.45, 1, u), 1.6);        // и схлопывается в плотную массу
-    const w0 = sstep(0.42 + 0.08 * d, 0.84 + 0.08 * d, p);
-    const w = backOut(w0, P.shell ? 0.9 : 1.7);        // перелёт через цель и возврат
-    const m = sstep(0.48 + 0.08 * d, 0.90 + 0.08 * d, p);
+    const op = sstep(0.08 + 0.06 * d, 0.26 + 0.06 * d, p) * (1 - sstep(0.70 + 0.05 * d, 0.88 + 0.05 * d, p)); // створки открыты
+    const w0 = sstep(0.30 + 0.05 * d, 0.70 + 0.05 * d, p);
+    const w = backOut(w0, P.shell ? 0.7 : 1.2);                                  // скольжение с перелётом
+    const m = sstep(0.34 + 0.05 * d, 0.84 + 0.05 * d, p);
+    const roll = sstep(0.28 + 0.05 * d, 0.60 + 0.05 * d, p);
     const A = P.Afn ? P.Afn() : P.A;
-    // точка в сжатой массе: близко к оси, у каждой детали своя
-    _J.set(hash(i * 3 + 1) - 0.5, hash(i * 3 + 2) - 0.5, hash(i * 3 + 3) - 0.5).multiplyScalar(1.0);
-    _F.copy(A.p).sub(FOLD_C).multiplyScalar(0.16).add(FOLD_C).add(_J);
-    P.root.position.copy(A.p).lerp(_F, c);
-    if (P.ex) { const e = 0.35 * a * (1 - c); P.root.position.x += P.ex[0] * e; P.root.position.y += P.ex[1] * e; P.root.position.z += P.ex[2] * e; }
-    // в массе всё мелко дрожит
-    const jit = 0.07 * c * (1 - w0);
-    P.root.position.x += jit * Math.sin(p * 210 + i * 1.7); P.root.position.y += jit * Math.sin(p * 190 + i * 2.3); P.root.position.z += jit * Math.sin(p * 230 + i * 0.9);
-    P.root.position.lerp(P.B.p, w);
-    P.root.position.y += P.arc * 0.7 * Math.sin(PI * w0) * (P.shell ? 0.6 : 1);
-    // посадка: затухающая дрожь на месте
-    const pl = 0.84 + 0.08 * d, dtl = p - pl;
-    if (dtl > 0) P.root.position.y += 0.05 * Math.exp(-26 * dtl) * Math.sin(95 * dtl + i);
+    P.root.position.copy(A.p).lerp(P.B.p, w);
+    P.root.position.y += P.arc * Math.sin(PI * w0);
     _q1.copy(A.q).slerp(P.B.q, w);
-    if (P.tw) {
-      _v.set(...P.tw.axis);
-      _q2.setFromAxisAngle(_v, P.tw.ang * (0.5 * a + c) * (1 - w0)); _q1.multiply(_q2);
-      if (P.flip && P.tw.axis[2] === 1) { _q2.setFromAxisAngle(_v, 2 * PI * w0); _q1.multiply(_q2); }
+    P.root.scale.copy(A.s).lerp(P.B.s, w);
+    // створка оболочки раскрывается на шве, как раковина
+    if (P.sh) {
+      _pl.copy(P.sh.pivA).lerp(P.sh.pivB, m);
+      hingeAbout(P, X_AXIS, _pl, P.sh.side * (P.sh.up ? 1.75 : 0.6) * op);
+    } else if (P.hg) {
+      _ax.set(...P.hg.axis); _pl.set(...P.hg.piv);
+      hingeAbout(P, _ax, _pl, P.hg.ang * op);
     }
+    // весь модуль проворачивается вокруг оси вагона (бочка) и встаёт на место
+    if (P.mod) {
+      const ay = lerp(P.mod.ycA, P.mod.ycB, m), phi = P.mod.dir * 2 * PI * roll;
+      const ry = P.root.position.y - ay, rz = P.root.position.z, cs = Math.cos(phi), sn = Math.sin(phi);
+      P.root.position.y = ay + ry * cs - rz * sn; P.root.position.z = ry * sn + rz * cs;
+      _q2.setFromAxisAngle(X_AXIS, phi); _q1.premultiply(_q2);
+    }
+    // посадка: затухающая дрожь на месте
+    const pl = 0.78 + 0.08 * d, dtl = p - pl;
+    if (dtl > 0) P.root.position.y += 0.04 * Math.exp(-26 * dtl) * Math.sin(95 * dtl + i);
     P.root.quaternion.copy(_q1);
-    P.root.scale.copy(A.s).lerp(P.B.s, w).multiplyScalar(1 - (P.shell ? 0.25 : 0.4) * c * (1 - w0));
     if (P.morph) {
       P.morph.morphTargetInfluences[0] = m;
       P.morph.material.userData.uni.uM.value = m;
     }
     tint(P, m);
+    // колесо катится по рельсу, пока ползёт вместе с составом
+    if (P.wheel) {
+      const x = P.root.position.x;
+      if (P.lastX !== undefined) { P.wheel.ang += (x - P.lastX) / (P.wheel.r0 * P.root.scale.x); P.spin.rotation.z = -P.wheel.ang; }
+      P.lastX = x;
+    }
   });
 }
 
@@ -526,15 +566,15 @@ ui.innerHTML = `
 <div class="lbg-stage"><b id="st">Паровоз</b><em id="pc">0%</em></div></div>
 <div class="lbg-side"><div><span>Скорость</span><b id="sp">0 км/ч</b></div><div><span>Колёсных пар</span><b>12</b></div><div><span>Вагонов</span><b id="wg">0</b></div><div><span>Длина</span><b id="ln">21 м</b></div></div>
 <div class="lbg-bar">
- <div class="lbg-btns"><button data-a="loco">Паровоз</button><button data-a="split">Сложить</button><button data-a="build">Собрать в скоростной</button><button data-a="go">Поехали</button></div>
+ <div class="lbg-btns"><button data-a="loco">Паровоз</button><button data-a="split">Раскрыть</button><button data-a="build">Собрать в скоростной</button><button data-a="go">Поехали</button></div>
  <input id="sl" type="range" min="0" max="1000" value="0">
  <div class="lbg-btns"><button data-v="q">3/4</button><button data-v="s">Сбоку</button><button data-v="f">Спереди</button><button data-v="t">Сверху</button><button data-a="ghost">Прозрачный корпус</button></div>
 </div>
 <div id="lb"></div>`;
 app.appendChild(ui);
 const st = ui.querySelector('#st'), pc = ui.querySelector('#pc'), sp = ui.querySelector('#sp'), sl = ui.querySelector('#sl'), wg = ui.querySelector('#wg'), ln = ui.querySelector('#ln'), lbBox = ui.querySelector('#lb');
-const STAGES = [[0, 0.07, 'Паровоз Mikado 2-8-2'], [0.07, 0.40, 'Складывание'], [0.40, 0.62, 'Перестройка'], [0.62, 0.94, 'Сборка'], [0.94, 1.01, 'Скоростной состав']];
-const LABELS = ['noseU', 'b1U', 'b2U', 'b3U', 'tailU', 'spAL', 'ax_d2', 'cylL', 'mainL', 'chim', 'cabRoof', 'coal', 'pilot', 'pipe'];
+const STAGES = [[0, 0.07, 'Паровоз Mikado 2-8-2'], [0.07, 0.30, 'Раскрытие'], [0.30, 0.72, 'Превращение'], [0.72, 0.94, 'Замки'], [0.94, 1.01, 'Скоростной состав']];
+const LABELS = ['noseU', 'b1U', 'b2U', 'b3U', 'tailU', 'core_b1', 'core_b2', 'spAL', 'chim', 'cabRoof', 'coal', 'pilot'];
 const labelEls = LABELS.map((id) => { const e = document.createElement('div'); e.className = 'lb'; e.textContent = byName[id].label; lbBox.appendChild(e); return {id, e}; });
 
 function setView(k) {
@@ -548,7 +588,7 @@ ui.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
   const a = b.dataset.a, v = b.dataset.v;
   if (v) return setView(v);
   if (a === 'loco') animateTo(0, 0.18);
-  if (a === 'split') animateTo(0.40, 0.12);
+  if (a === 'split') animateTo(0.30, 0.10);
   if (a === 'build') animateTo(0.94, 0.09);
   if (a === 'go') animateTo(1, 0.1);
   if (a === 'ghost') { state.ghost = !state.ghost; b.classList.toggle('on', state.ghost); setGhost(); userTouch(); }
@@ -620,7 +660,7 @@ function frame(now) {
   const len = lerp(21, 31, sstep(0.36, 0.84, p));
   ln.textContent = len.toFixed(0) + ' м';
   if (document.activeElement !== sl) sl.value = Math.round(p * 1000);
-  const la = sstep(0.08, 0.13, p) * (1 - sstep(0.17, 0.23, p));
+  const la = sstep(0.12, 0.17, p) * (1 - sstep(0.26, 0.32, p));
   const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
   for (const {id, e} of labelEls) {
     const P = byName[id];
@@ -633,7 +673,7 @@ function frame(now) {
 
 // кадр фильма: всё считается из времени t (с). Камера летит по заданной траектории.
 const FILM = {dur: 24, fps: 30};
-const FP = [[0, 0], [2.5, 0], [7.0, 0.40], [8.4, 0.46], [17.0, 0.94], [18.6, 1], [24, 1]];
+const FP = [[0, 0], [2.5, 0], [7.5, 0.30], [15.5, 0.72], [19.5, 0.94], [21, 1], [24, 1]];
 function filmP(t) { for (let i = 1; i < FP.length; i++) if (t <= FP[i][0]) { const [t0, p0] = FP[i - 1], [t1, p1] = FP[i]; return lerp(p0, p1, (t - t0) / (t1 - t0)); } return 1; }
 let filmT = 0;
 window.__film = (t) => {
@@ -643,7 +683,7 @@ window.__film = (t) => {
   state.p = filmP(t);
   const p = state.p, k = t / FILM.dur;
   const ang = lerp(0.62, 0.62 - 3.4, sstep(0, 1, k) * 0.9 + k * 0.1) ;
-  const rad = 30 - 9 * sstep(0.05, 0.2, k) * (1 - sstep(0.3, 0.42, k)) + 12 * sstep(0.35, 0.6, k) - 8 * sstep(0.75, 1, k);
+  const rad = 30 - 5 * sstep(0.05, 0.2, k) * (1 - sstep(0.6, 0.75, k)) + 8 * sstep(0.6, 0.8, k) - 4 * sstep(0.85, 1, k);
   const hgt = lerp(8, 12, sstep(0.1, 0.4, k)) - 5 * sstep(0.72, 1, k);
   const tx = lerp(-1.5, 3.5, sstep(0.72, 1, k));
   controls.target.set(tx, 2.2, 0);
